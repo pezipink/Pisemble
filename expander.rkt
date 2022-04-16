@@ -515,7 +515,7 @@
              #:when (or isSp (and (or isX isW) (and (<= num 31)(>= num 0))))
              #:with regnum num
              #:with is32 isW)))
-(define-syntax (6502-line stx)
+(define-syntax (arm-line stx)
   (writeln stx)
   (define-syntax-class immediate
     (pattern #:immediate))
@@ -619,7 +619,7 @@
     [(_ e:expr ... ) #'(begin e ...) ]
     [(_ e ) #'e] ))
 
-(define-syntax (6502-block stx)
+(define-syntax (arm-block stx)
   (syntax-parse stx
     ([_ line ... ] #'(begin line ... ))))
 

@@ -23,9 +23,9 @@
 (define read-lbrace
   (case-lambda
    [(ch in)
-    (parse-6502-block in in (object-name in))]
+    (parse-arm-block in in (object-name in))]
    [(ch in src line col pos)
-    (parse-6502-block in in src)]))
+    (parse-arm-block in in src)]))
 
 (define read-@
   (case-lambda
@@ -74,8 +74,8 @@
                     [else input])])
     (string->number (string-replace str "_" "") radix)))
 
-(define (parse-6502-block val in src)  
-  (define (parse-6502-line acc paren-count)
+(define (parse-arm-block val in src)  
+  (define (parse-arm-line acc paren-count)
     ; skip nested expressions, we assume a line ends at the first newline char
     ; outside of parens.
     (let ([c (peek-char in)])
@@ -86,24 +86,24 @@
          (begin
            (read-line in)
            
-           `(6502-line ,@(reverse acc)))]
+           `(arm-line ,@(reverse acc)))]
         
         [(and (equal? c #\newline) (equal? paren-count 0))
          ;(writeln "new line")
          (begin
            (read-char in)
-           `(6502-line ,@(reverse acc)))]
+           `(arm-line ,@(reverse acc)))]
 
         [(char-whitespace? c)
          (begin
            (read-char in)
-           (parse-6502-line acc paren-count))]
+           (parse-arm-line acc paren-count))]
 
         [(equal? c #\})
-         `(6502-line ,@(reverse acc))]
+         `(arm-line ,@(reverse acc))]
         
         [else
-         (parse-6502-line (cons [read-syntax "" in] acc) paren-count)])))
+         (parse-arm-line (cons [read-syntax "" in] acc) paren-count)])))
 
   (define (aux acc)
     (let ([c (peek-char in)])
@@ -111,10 +111,10 @@
         [(equal? c #\})
          (begin
            (read-char in)
-           `(6502-block ,@(reverse acc)))]
+           `(arm-block ,@(reverse acc)))]
         [else
-         (let ([c (parse-6502-line '() 0)])
-           (if (equal? c '(6502-line))
+         (let ([c (parse-arm-line '() 0)])
+           (if (equal? c '(arm-line))
                (aux acc)
                (aux (cons c acc))))])))
 
