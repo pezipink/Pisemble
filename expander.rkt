@@ -502,6 +502,18 @@
     (write-value-32 final))))
 
 (begin-for-syntax
+  (define-syntax-class immediate
+    (pattern #:immediate))
+  (define-syntax-class system-register
+    #:datum-literals (mpidr_el1)
+    (pattern mpidr_el1 #:with regnum #x4005))
+  (define-syntax-class opcode
+    (pattern x:id
+             #:do [(define sym (syntax-e (attribute x)))
+                   (define ocs
+                     (list 'adr 'and 'b 'bl 'cbz 'cbnz 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'orr 'ret
+                           'str 'strb 'strh 'stur 'sub 'wfe))]
+             #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
     (pattern x:id
              #:do [(define str (symbol->string (syntax-e (attribute x))))
@@ -510,29 +522,19 @@
                    (define isW (or (eq? (string-ref str 0) #\W)
                                    (eq? (string-ref str 0) #\w)))
                    (define isSp  (equal? str "sp" ))
+                   (define isZ  (or (equal? str "xzr" ) (equal? str "wzr" )))
                    (define num
-                     (if isSp #b11111 (string->number (substring str 1))))]
+                     (if (or isSp isZ) #b11111
+                         (string->number (substring str 1))))]
              #:when (or isSp (and (or isX isW) (and (<= num 31)(>= num 0))))
              #:with regnum num
              #:with is32 isW)))
 (define-syntax (arm-line stx)
   (writeln stx)
-  (define-syntax-class immediate
-    (pattern #:immediate))
 
 
 
-  (define-syntax-class system-register
-    #:datum-literals (mpidr_el1)
-    (pattern mpidr_el1 #:with regnum #x4005))
 
-  (define-syntax-class opcode
-    (pattern x:id
-             #:do [(define sym (syntax-e (attribute x)))
-                   (define ocs
-                     (list 'adr 'and 'b 'bl 'cbz 'cbnz 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'orr 'ret
-                           'str 'strb 'strh 'stur 'sub 'wfe))]
-             #:when (ormap (λ (x) (eq? sym x)) ocs)))
  
   (syntax-parse stx #:datum-literals (= !)
    ; nop
@@ -565,20 +567,20 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-imm `rt.is32 (list `rt.regnum) (list n) #f))]
-   ; mov wzr x1
+   ; mov sp x1
    [(_ (~optional label:label) oc:opcode rt:register rn:register)
     #:when (equal? (syntax-e #'rt) 'sp)
     #'(begin
       (~? (try-set-jump-source `label set-jump-source-current))
-        ;rewrite this as ADD
+        ;rewrite this as ADD (mov sp x is an alias for add sp x 0 )
       (write-instruction 'add 'reg-reg-imm `rt.is32 (list `rt.regnum `rn.regnum) (list 0) #f))
     ]
 
    ; mov wzr x1
-   ;; [(_ (~optional label:label) oc:opcode rt:register rm:register)
-   ;;  #'(begin
-   ;;      (~? (try-set-jump-source `label set-jump-source-current))
-   ;;      (write-instruction 'oc 'reg-reg `rt.is32 (list `rt.regnum `rm.regnum) '() #f))]
+   [(_ (~optional label:label) oc:opcode rt:register rm:register)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-reg `rt.is32 (list `rt.regnum `rm.regnum) '() #f))]
    ; sub x1 x2 @12
    [(_ (~optional label:label) oc:opcode rt:register rn:register #:immediate n)
     #'(begin
@@ -729,4 +731,4 @@
          )]))
   
 (provide (all-defined-out))
-(provide (for-syntax register))
+(provide (for-syntax immediate system-register opcode register))
