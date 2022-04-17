@@ -128,9 +128,10 @@
      (match-lambda
        [(list bin imm)
         ; bottom two bits go to 30-29, rest to 23-5
-        (let ([shifted-lo (arithmetic-shift (bitwise-and #x3 imm ) 30) ]
-              [shifted (arithmetic-shift (bitwise-and #x1FFFFC imm ) 5) ])
-          (bitwise-ior-n bin shifted))])
+        (let* (
+              [shifted-lo (arithmetic-shift (bitwise-and #x3 imm ) 29) ]
+              [shifted (arithmetic-shift (bitwise-and #x1FFFFC imm ) 3) ])
+          (bitwise-ior-n bin shifted-lo shifted))])
 
      ]
     ['immr-imms-rn-rd 
@@ -277,7 +278,7 @@
     ['ldr 'reg_reg-imm_excla  'imm9-rn-rd                    #b11111000010000000000110000000000 b30 #f]
 
     ['ldr 'reg-lbl       'imm19-rt                           #b01011000000000000000000000000000 b30 #f]
-    ['ldr  'reg_reg-imm_ 'imm12-rn-rd                        #b10111001010000000000000000000000 b31 #f]
+    ['ldr  'reg_reg-imm_ 'imm12-rn-rd                       #b11111001010000000000000000000000 b30 shift-2-or-3]
     ; post index
     ['ldrh 'reg_reg_imm  'imm9-rn-rd                         #b01111000010000000000010000000000 #f #f]
     ; pre index
@@ -469,7 +470,7 @@
 
 (define (write-instruction opcode syntax-mode is-32bit? data-args immediate-address-args transition-target)
   (begin
-        (writeln (format "write-instruction ~a ~a ~a ~a ~a ~a" opcode syntax-mode is-32bit? data-args immediate-address-args transition-target))
+       ; (writeln (format "write-instruction ~a ~a ~a ~a ~a ~a" opcode syntax-mode is-32bit? data-args immediate-address-args transition-target))
   (let*([meta (hash-ref opcode-metadata (cons opcode syntax-mode))]
         [raw (metadata-raw-value meta)]
         [addressing-mode (metadata-addressing-mode meta)]
@@ -496,8 +497,8 @@
 
     ; now we mark this as a target if applicable then write the bytes
     (when transition-target (write-transition-target transition-target final-address-encoder))
-    (pbin final)
-    (phex final)
+;    (pbin final)
+;    (phex final)
 ;    (wdb "write-instruction ~a ~a ~a ~a ~a" opcode syntax-mode is-32bit? data-args immediate-address-args)
     (write-value-32 final))))
 
@@ -511,7 +512,7 @@
     (pattern x:id
              #:do [(define sym (syntax-e (attribute x)))
                    (define ocs
-                     (list 'adr 'and 'b 'bl 'cbz 'cbnz 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'orr 'ret
+                     (list 'add 'adr 'and 'b 'bl 'cbz 'cbnz 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'orr 'ret
                            'str 'strb 'strh 'stur 'sub 'wfe))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
@@ -530,12 +531,7 @@
              #:with regnum num
              #:with is32 isW)))
 (define-syntax (arm-line stx)
-  (writeln stx)
-
-
-
-
- 
+;  (writeln stx)
   (syntax-parse stx #:datum-literals (= !)
    ; nop
    [(_ (~optional label:label) oc:opcode)
@@ -674,14 +670,14 @@
                    [amount (- actual (target-label-location current-target))]
                    [encoder (target-label-immediate-encoder current-target)])
                 
-                (when (or (> amount 127) (< amount -127))
-                  (writeln
-                   (format "warning: attempted to branch over +/-127 (~a) bytes to label ~a from location $~x"
-                           amount k (target-label-location current-target))))
-                   (writeln
-                    (format "label ~A offset ~A "
-                            (target-label-location current-target)
-                            (- actual (target-label-location current-target))))
+                ;; (when (or (> amount 127) (< amount -127))
+                ;;   (writeln
+                ;;    (format "warning: attempted to branch over +/-127 (~a) bytes to label ~a from location $~x"
+                ;;            amount k (target-label-location current-target))))
+                ;;    (writeln
+                ;;     (format "label ~A offset ~A "
+                ;;             (target-label-location current-target)
+                ;;             (- actual (target-label-location current-target))))
 
                 (let* (
                        [current (target-label-location current-target)]

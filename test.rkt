@@ -10,8 +10,34 @@
         sub x2 x2 @1
         cbnz x2 inner- }]))
 
+(define-syntax (debug-reg stx)
+  (syntax-parse stx
+    [(_ r:register)
+     #'{
+        (PUSH x0) ; preserve x0, it is used for passing char to send-char
+        (PUSH r)  ; 
+        mov w0 @2  ; first send 2 indicating a 32 bit number will be sent
+        bl send-char:
+        (POP x0)   ; restore r into x0
+        bl  send-char:
+        lsr w0 w0 @8
+        bl  send-char:
+        lsr w0 w0 @8    
+        bl  send-char:
+        lsr w0 w0 @8    
+        bl  send-char:
+        (POP x0) ; restore x0 original value
+        }]))
 
-(define PERIPH-BASE $FE000000)
+(define pi 'pi3)
+;(define pi 'pi4)
+
+
+(define PERIPH-BASE
+  (cond
+    [(equal? pi 'pi3) $3F000000]
+    [(equal? pi 'pi4) $FE000000]
+    [else (error "unsupported pi model")]))
 (define GPIOFSEL (+ PERIPH-BASE $200000))
 (define GPIOFSEL1 (+ PERIPH-BASE $200004))
 (define GPIOUD   (+ PERIPH-BASE $2000E4))
@@ -36,17 +62,17 @@
 (define-syntax (POP stx)
   (syntax-parse stx
     [(_ r:register)
-     #'{ ldr r [sp] @-16 }]))
+     #'{ ldr r [sp] @16 }]))
 
 (define-syntax (POPH stx)
   (syntax-parse stx
     [(_ r:register)
-     #'{ ldrh r [sp] @-16 }]))
+     #'{ ldrh r [sp] @16 }]))
 
 (define-syntax (POPB stx)
   (syntax-parse stx
     [(_ r:register)
-     #'{ ldrb r [sp] @-16 }]))
+     #'{ ldrb r [sp] @16 }]))
 
 
 (aarch64 {
@@ -62,7 +88,23 @@
      aux-lsr = $54
      aux-cntrl = $60
      aux-baud = $68
+
+     ;mailbox offsets
+     mbox-read = $0
+     mbox-poll = $10
+     mbox-sender = $14
+     mbox-status = $18
+     mbox-config = $1c
+     mbox-write = $20
+     mbox-response = $80000000
+     mbox-full     = $80000000
+     mbox-empty    = $40000000
+
+     ;Mailbox channels
+     mbox-ch-prop = $8  ; request to VC from ARM
      
+     ; VideoCore message tags
+
      mrs x0 mpidr_el1
      mov x1 @$3
      and x0 x0 x1
@@ -76,8 +118,6 @@
     ldr x1 START:
     mov sp x1
     ldr x1 ALT5:
-    
-    
     ldr x0 GPFSEL1:
 ;;      ;mov x1 @$12  ; set 
     str w1 (x0 @0)
@@ -99,14 +139,19 @@
      strb w1 (x0 @aux-lcr)      ; 8 bit mode
      mov  x1 @0
      strb w1 (x0 @aux-mcr)      ; set rts line high
-     mov  x1 @541
-     strh w1 (x0 @aux-baud)    ; baud 115200
+     (cond
+       [(equal? pi 'pi3) {mov x1 @270}]
+       [(equal? pi 'pi4) {mov x1 @541}]
+       [else (error "unsupported pi model")])
+     strh w1 (x0 @aux-baud)    
      mov  x1 @3
      strb w1 (x0 @aux-cntrl)      ; enable tx rx
 
      ; send string over the mini UART
      (define (debug-str str)
+       
        {
+        (PUSH x0)
         ; our protocol expects a byte of 1 to then
         ; receive a string
         mov w0 @1
@@ -124,7 +169,9 @@
         bl  send-char:
         mov w0 @$0 ; null
         bl  send-char:
+        (POP x0)
        })
+
 
      
      ; send string over the mini UART
@@ -132,6 +179,7 @@
        {
         ; our protocol expects a byte of 2 to then
         ; receive a 32 bit number
+        (PUSH x0)
         orr w8 w0 w0
         mov w0 @2
         bl send-char:
@@ -143,6 +191,7 @@
         bl  send-char:
         lsr w0 w0 @8    
         bl  send-char:
+        (POP x0)
        })
 
      
@@ -153,19 +202,125 @@
      mov w0 @$BAD
      lsl x0 x0 @16
      movk w0 @$F00D
-     (debug-w0)
+     (debug-reg w0)
 :here     adr x0 here-
-     (debug-w0)
+     (debug-reg w0)
 
-     mov w1 @42
-     (PUSH x1)
-     (POP x0)
-     (debug-w0)
+
+     (debug-str "value before:")
+     adr x0 MBOX-MSG:
+     (debug-reg w0)
+;    add x0 x0 @24
+     ldrb w0 (x0 @0)
+     (debug-reg w0)
+
+     (debug-str "fb addr nefore")
+     adr x0 fb:
+     ldr w0 (x0 @0)
+     (debug-reg x0)
+
      
+     ldr x0 VC_MBOX: 
+:wait      
+     ldr w1 (x0 @mbox-status)
+     (debug-str "STATUS")
+     (debug-reg x0)
+     (debug-reg x1)
+
+     ; and with 0x8000_0000
+     mov x2 @1
+     lsl x2 x2 @31
+     and x1 x1 x2
+     cbnz x1 wait-
+     (debug-str "RTS")
+     ; attempt to call the mailbox interface
+     ; upper 28 bits are the address of the message
+     adr x2 MBOX-MSG:
+     mov x0 x2
+;     (debug-w0)
+     ldr x0 VC_MBOX: 
+     ; lower four bits specify the mailbox channel,
+     ; in this case mbox-ch-prop (8)
+     mov x3 @mbox-ch-prop
+     orr x2 x2 x3 ; we dont support orr reg-reg-imm yet
+     ;now we wait until the FULL flag is not set so we can
+     ; send our message
+     (debug-reg w0)
+     (debug-reg w2)
+
+     str w2 (x0 @mbox-write)
+
+     (debug-str "WFR")
+     ; now wait for a response 
+:wait      
+    ldr w1 (x0 @mbox-status)
+;    (debug-str "STATUS")
+;    (debug-reg x1)
+     ; and with 0x4000_0000
+     mov x2 @1
+     lsl x2 x2 @30
+     and x1 x1 x2
+     cbnz x1 wait-
+;     (debug-str "DONE")
+     ; check if mbox-read = channel
+
+
+     ldr w1 (x0 @mbox-read)
+     (debug-reg x1)
+     mov x2 @%1111
+     and x1 x1 x2
+     sub x1 x1 @mbox-ch-prop
+     cbnz x1 wait-
+
+     ;; (debug-str "response code")
+     ;; adr x0 MBOX-MSG:
+     ;; add x0 x0 @4
+     ;; ldr w0 (x0 @0)
+     ;; (debug-reg x0)
+
+     ;; (debug-str "inner response code")
+     ;; adr x0 MBOX-MSG:
+     ;; add x0 x0 @16
+     ;; ldr w0 (x0 @0)
+     ;; (debug-reg x0)
+
+     (debug-str "bpl")
+     adr x0 bpl:
+;     add x0 x0 @20
+     ldr w0 (x0 @0)
+     (debug-reg x0)
+     
+     (debug-str "fb addr")
+     adr x0 fb:
+;     add x0 x0 @20
+     ldr w0 (x0 @0)
+     (debug-reg x0)
+     ;convert to gpu address
+     ldr x1 CONVERT:
+     and x0 x0 x1
+     mov x1 @255
+     mov x4 @1  ; rows
+:row     
+     mov x3 @$800
+:col
+     str w1 (x0 @0)
+     add w0 w0 @4
+;     add w1 w1 @32    
+     sub x3 x3 @1
+     cbnz x3 col-
+
+     sub x4 x4 @1
+     cbnz x4 row-
+     
+     (debug-str "DONEDONE")
  :loop
      b loop:
 
 :send-char ; put char in w0
+  (PUSH x0)
+  (PUSH x1)
+  (PUSH x2)
+  (PUSH x3)
   ldr  x1 AUXB:
   ; wait for ready bit
   mov  x2 @$20
@@ -174,7 +329,12 @@
   and  w3 w2 w3
   cbz  w3 wait-
   strb w0 (x1 @aux-io)
+  (POP x3)
+  (POP x2)
+  (POP x1)
+  (POP x0)
   ret x30
+
 
 
   ; the following values are used for loading 64 bit addresses/values via LDR(literal)
@@ -186,9 +346,90 @@
   :GPUD (write-value-64 GPIOUD)
   :AUXB (write-value-64 AUX-BASE)
   :DELAY (write-value-64 $FFFF)
-
+  :VC_MBOX (write-value-64 VCORE-MBOX)
   :START (write-value-64 $80000)
+  :CONVERT (write-value-64 $3FFFFFFF)
+  ; to communicate with the video core gpu we need an address that
+  ; is 16-byte algined - the lower 4 bits are not set. these are then
+  ; used to specify the channel
+  /= 16
+  :MBOX-MSG
+    (write-value-32 (* 35 4)) ; total buffer size bytes including headers
+    (write-value-32 0) ; request / response code (0 = request)
+    ;begin tags
+    ; set physical 
+      (write-value-32 $48003)
+      (write-value-32 8) ; value buffer size
+      (write-value-32 0) ; 0 = request
+      (write-value-32 800) ; width
+      (write-value-32 600); height
+    ; set virt
+      (write-value-32 $48004)
+      (write-value-32 8) ; value buffer size
+      (write-value-32 8) ; 0 = request
+      (write-value-32 800) ; width
+      (write-value-32 600); height
 
+    ; set virtoff
+      (write-value-32 $48009)
+      (write-value-32 8) ; value buffer size
+      (write-value-32 0) ; 0 = request
+      (write-value-32 0) ; x
+      (write-value-32 0); y
+
+   ; set depth 
+      (write-value-32 $48005)
+      (write-value-32 4) 
+      (write-value-32 4) 
+      (write-value-32 32) ; bpp
+
+   ; set pxlorder
+      (write-value-32 $48006)
+      (write-value-32 4) 
+      (write-value-32 4) 
+      (write-value-32 1) ; RGB
+
+   ; get fb
+      (write-value-32 $40001)
+      (write-value-32 8) 
+      (write-value-32 8) 
+:fb
+      (write-value-32 4096) ; FramebufferInfo.pointer
+      (write-value-32 0) ; FramebufferInfo.size
+
+   ; get pitch
+      (write-value-32 $40008)
+      (write-value-32 4) 
+      (write-value-32 4) 
+:bpl      (write-value-32 0) ; bytes per line
+
+
+    (write-value-32 0) ;end tag
+
+  ;; :MBOX-MSG
+  ;;   (write-value-32 (* 8 4)) ; total buffer size bytes including headers
+  ;;   (write-value-32 0) ; request / response code (0 = request)
+  ;;     ;begin tags
+  ;;     (write-value-32 $10004) ; Get firmware revision
+  ;;     (write-value-32 8) ; value buffer size
+  ;;     (write-value-32 0) ; 0 = request
+  ;;     (write-value-32 0)
+  ;;     (write-value-32 0); response should be written here
+  ;;   (write-value-32 0) ;end tag
+
+
+  ; SWITCH ON ACT LED
+;; :MBOX-MSG
+;;     (write-value-32 (* 8 4)) ; total buffer size bytes including headers
+;;     (write-value-32 0) ; request / response code (0 = request)
+;;       ;begin tags
+;;       (write-value-32 $38041) ;set led
+;;       (write-value-32 8) ; req length
+;;       (write-value-32 0) ; 0 = request
+;;       (write-value-32 130)
+;;       (write-value-32 1)
+;;     (write-value-32 0) ;end tag
+    
 })
 
 ;BLINKY 1!!

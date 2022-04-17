@@ -21,12 +21,12 @@ type State =
     
 port.ReadTimeout <- 35000
 let mutable state = Waiting
-
+printfn "## listening..."
 while true do
     try
         match state with 
         | Waiting -> 
-            printfn "## waiting on control code..."
+//            printfn "## waiting on control code..."
             let b = (port.ReadByte())
             if b = (int)StateCode.String then 
                 //printfn "string incoming"
