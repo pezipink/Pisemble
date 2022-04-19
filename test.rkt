@@ -14,20 +14,57 @@
   (syntax-parse stx
     [(_ r:register)
      #'{
-        (PUSH x0) ; preserve x0, it is used for passing char to send-char
-        (PUSH r)  ; 
-        mov w0 @2  ; first send 2 indicating a 32 bit number will be sent
+        ; preserve x0, it is used for passing char to send-char
+        (PUSH x0) 
+        (PUSH r)
+        ; first send code indicating whether a 32 or 64 bit number will be sent
+        mov w0 @(if `r.is32 2 3)
         bl send-char:
-        (POP x0)   ; restore r into x0
+        ; restore r into x0 and send first char
+        (POP x0)   
         bl  send-char:
-        lsr w0 w0 @8
-        bl  send-char:
-        lsr w0 w0 @8    
-        bl  send-char:
-        lsr w0 w0 @8    
-        bl  send-char:
-        (POP x0) ; restore x0 original value
-        }]))
+        ; shift and send the remainig 3 or 7 bytes
+        (for ([_ (in-range (if `r.is32 3 7))])
+          { lsr x0 x0 @8
+            bl send-char: })
+        ; restore x0 original value
+        (POP x0) }]
+    [(_ r:register rn:register ...+)
+     #'(begin (debug-reg r)
+              (debug-reg rn ...))]))
+
+(define-syntax (dump-all-regs stx)
+  (syntax-parse stx
+    [(_)
+     #:with (reg ...) (for/list ([i (in-range 0 31)])
+                   (datum->syntax this-syntax (string->symbol (format "X~a"i))))
+     #:with (name ...) (for/list ([i (in-range 0 31)])
+                   (datum->syntax this-syntax (format "X~a "i)))
+     #'(begin (begin (debug-str name #f) (debug-reg reg)) ...)]))
+  ; (debug-reg x0 w1 w2 x3)
+
+(define-syntax (subr stx)
+  ; define a subroutine. create a label for it and push/pop the supplied
+  ; regs as a prologue/epilogue. Of course, with a bit more work they
+  ; could be automatically detected
+  (syntax-parse stx
+    [(_ subroutine-name:id [used-reg:register ...] code )
+     #:with (reg-rev ...)
+     (datum->syntax this-syntax (reverse (syntax->list #'(used-reg ...))))
+     #:with label
+     (let* ([sym (syntax-e #'subroutine-name)]
+            [str (symbol->string sym)]
+            [label-str (format ":~a" str)]
+            [label (string->symbol label-str)])
+       (datum->syntax this-syntax label))
+     #'(begin
+         (try-set-jump-source `label set-jump-source-current)
+         (PUSH x30) ; always preserve return address register
+         (PUSH used-reg) ...
+         code
+         (POP reg-rev) ...
+         (POP x30)
+         { ret x30 })]))
 
 (define pi 'pi3)
 ;(define pi 'pi4)
@@ -105,6 +142,7 @@
      
      ; VideoCore message tags
 
+     
      mrs x0 mpidr_el1
      mov x1 @$3
      and x0 x0 x1
@@ -148,7 +186,7 @@
      strb w1 (x0 @aux-cntrl)      ; enable tx rx
 
      ; send string over the mini UART
-     (define (debug-str str)
+     (define (debug-str str newline?)
        
        {
         (PUSH x0)
@@ -161,12 +199,15 @@
          {
           mov w0 @(char->integer c)
           bl send-char:
-         })
+          })
+       (when newline?
+         {
+          mov w0 @$A ; line feed
+          bl  send-char:
+          mov w0 @$D ; cr
+          bl  send-char:
+          })
        {
-        mov w0 @$A ; line feed
-        bl  send-char:
-        mov w0 @$D ; cr
-        bl  send-char:
         mov w0 @$0 ; null
         bl  send-char:
         (POP x0)
@@ -175,46 +216,48 @@
 
      
      ; send string over the mini UART
-     (define (debug-w0)
-       {
-        ; our protocol expects a byte of 2 to then
-        ; receive a 32 bit number
-        (PUSH x0)
-        orr w8 w0 w0
-        mov w0 @2
-        bl send-char:
-        orr w0 w8 w8
-        bl  send-char:
-        lsr w0 w0 @8
-        bl  send-char:
-        lsr w0 w0 @8    
-        bl  send-char:
-        lsr w0 w0 @8    
-        bl  send-char:
-        (POP x0)
-       })
+     ;; (define (debug-w0)
+     ;;   {
+     ;;    ; our protocol expects a byte of 2 to then
+     ;;    ; receive a 32 bit number
+     ;;    (PUSH x0)
+     ;;    orr w8 w0 w0
+     ;;    mov w0 @2
+     ;;    bl send-char:
+     ;;    orr w0 w8 w8
+     ;;    bl  send-char:
+     ;;    lsr w0 w0 @8
+     ;;    bl  send-char:
+     ;;    lsr w0 w0 @8    
+     ;;    bl  send-char:
+     ;;    lsr w0 w0 @8    
+     ;;    bl  send-char:
+     ;;    (POP x0)
+     ;;   })
 
      
-     
+     bl dump-regs:     
 ;     (debug-str "HELLO WORLD!")
  ;    (debug-str "BAREMETAL RPI4 MEETS RACKETLANG!")
-     (debug-str "heres a number")
+     (debug-str "heres a number" #t)
      mov w0 @$BAD
      lsl x0 x0 @16
      movk w0 @$F00D
-     (debug-reg w0)
+     (debug-reg x0 w0)
+
+
 :here     adr x0 here-
      (debug-reg w0)
 
 
-     (debug-str "value before:")
+     (debug-str "value before:" #t)
      adr x0 MBOX-MSG:
      (debug-reg w0)
 ;    add x0 x0 @24
      ldrb w0 (x0 @0)
      (debug-reg w0)
 
-     (debug-str "fb addr nefore")
+     (debug-str "fb addr nefore" #t)
      adr x0 fb:
      ldr w0 (x0 @0)
      (debug-reg x0)
@@ -223,7 +266,7 @@
      ldr x0 VC_MBOX: 
 :wait      
      ldr w1 (x0 @mbox-status)
-     (debug-str "STATUS")
+     (debug-str "STATUS" #t)
      (debug-reg x0)
      (debug-reg x1)
 
@@ -232,7 +275,7 @@
      lsl x2 x2 @31
      and x1 x1 x2
      cbnz x1 wait-
-     (debug-str "RTS")
+     (debug-str "RTS" #t)
      ; attempt to call the mailbox interface
      ; upper 28 bits are the address of the message
      adr x2 MBOX-MSG:
@@ -250,7 +293,7 @@
 
      str w2 (x0 @mbox-write)
 
-     (debug-str "WFR")
+     (debug-str "WFR" #t)
      ; now wait for a response 
 :wait      
     ldr w1 (x0 @mbox-status)
@@ -284,13 +327,13 @@
      ;; ldr w0 (x0 @0)
      ;; (debug-reg x0)
 
-     (debug-str "bpl")
+     (debug-str "bpl" #t)
      adr x0 bpl:
 ;     add x0 x0 @20
      ldr w0 (x0 @0)
      (debug-reg x0)
      
-     (debug-str "fb addr")
+     (debug-str "fb addr" #t)
      adr x0 fb:
 ;     add x0 x0 @20
      ldr w0 (x0 @0)
@@ -299,7 +342,7 @@
      ldr x1 CONVERT:
      and x0 x0 x1
      mov x1 @255
-     mov x4 @1  ; rows
+     mov x4 @600  ; rows
 :row     
      mov x3 @$800
 :col
@@ -312,15 +355,11 @@
      sub x4 x4 @1
      cbnz x4 row-
      
-     (debug-str "DONEDONE")
+     (debug-str "DONEDONE" #t)
  :loop
      b loop:
 
-:send-char ; put char in w0
-  (PUSH x0)
-  (PUSH x1)
-  (PUSH x2)
-  (PUSH x3)
+(subr send-char [x0 x1 x2 x3] {
   ldr  x1 AUXB:
   ; wait for ready bit
   mov  x2 @$20
@@ -329,12 +368,34 @@
   and  w3 w2 w3
   cbz  w3 wait-
   strb w0 (x1 @aux-io)
-  (POP x3)
-  (POP x2)
-  (POP x1)
-  (POP x0)
-  ret x30
+})
+     
+;; :send-char ; put char in w0
+;;   (PUSH x30)
+;;   (PUSH x0)
+;;   (PUSH x1)
+;;   (PUSH x2)
+;;   (PUSH x3)
+;;   ldr  x1 AUXB:
+;;   ; wait for ready bit
+;;   mov  x2 @$20
+;;   :wait     
+;;   ldr  w3 (x1 @aux-lsr)
+;;   and  w3 w2 w3
+;;   cbz  w3 wait-
+;;   strb w0 (x1 @aux-io)
+;;   (POP x3)
+;;   (POP x2)
+;;   (POP x1)
+;;   (POP x0)
+;;   (PUSH x30)
+;;   ret x30
 
+:dump-regs
+  (PUSH x30)
+  (dump-all-regs)
+  (POP x30)
+  ret x30
 
 
   ; the following values are used for loading 64 bit addresses/values via LDR(literal)

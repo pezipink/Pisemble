@@ -12,14 +12,16 @@ port.Open()
 
 type StateCode = 
     | String = 1
-    | Number = 2
+    | Number32 = 2
+    | Number64 = 3
 
 type State = 
     | Waiting
     | String // null terminated string
-    | Number // 32bit number
+    | Number32 // 32bit number
+    | Number64 
     
-port.ReadTimeout <- 35000
+port.ReadTimeout <- 135000
 let mutable state = Waiting
 printfn "## listening..."
 while true do
@@ -31,38 +33,48 @@ while true do
             if b = (int)StateCode.String then 
                 //printfn "string incoming"
                 state <- String
-            elif b = (int)StateCode.Number then 
-                //printfn "number incoming"
-                state <- Number
+            elif b = (int)StateCode.Number32 then 
+                //printfn "number 32 incoming"
+                state <- Number32
+            
+            elif b = (int)StateCode.Number64 then 
+                //printfn "number 64 incoming"
+                state <- Number64
             else 
-                printfn $"unknown state code {b}"
+                //printfn $"unknown state code {b}"
                 state <-  Waiting
         | String -> 
             let str = new ResizeArray<char>()
             let mutable c = char(port.ReadChar())
             //printfn $"first char {char c} : {(int c):x}"
-            str.Add c
             while c <> (char 0x0) do
+                str.Add c
                 c <- char(port.ReadChar())
                 //printfn $"read char {char c} : {(int c):x}"
-                str.Add c
             printf $"{new String(str.ToArray())}"
             state <- Waiting
-        | Number -> 
+        | Number32 -> 
+            //printfn "## reading number"
+            // little endian
+            let mutable num = port.ReadByte()
+            num <- num ||| (port.ReadByte() <<< 8)
+            num <- num ||| (port.ReadByte() <<< 16)
+            num <- num ||| (port.ReadByte() <<< 24)       
+            printfn "%08x | %A" num num
+            state <- Waiting
+        | Number64 -> 
             //printfn "## reading number"
             // little endian
             let mutable num = port.ReadByte()
             num <- num ||| (port.ReadByte() <<< 8)
             num <- num ||| (port.ReadByte() <<< 16)
             num <- num ||| (port.ReadByte() <<< 24)
-            //let mutable hnum = port.ReadByte()
-            //hnum <- hnum &&& (port.ReadByte() <<< 8)
-            //hnum <- hnum &&& (port.ReadByte() <<< 16)
-            //hnum <- hnum &&& (port.ReadByte() <<< 24)
-            //let final = ((int64 hnum) <<< 32) ||| (int64 num)
-            //printf "%x | %A" final final
-            
-            printfn "%x | %A" num num
+            let mutable hnum = port.ReadByte()
+            hnum <- hnum &&& (port.ReadByte() <<< 8)
+            hnum <- hnum &&& (port.ReadByte() <<< 16)
+            hnum <- hnum &&& (port.ReadByte() <<< 24)
+            let final = ((int64 hnum) <<< 32) ||| (int64 num)
+            printfn "%016x | %A" final final
             state <- Waiting
     with
     | ex -> printfn $"Exception {ex} resetting to Waiting"
