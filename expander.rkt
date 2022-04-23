@@ -266,6 +266,7 @@
                        imm))])
   (create-opcode-metadata
    (['add 'reg-reg-imm   'imm12-rn-rd                        #b10010001000000000000000000000000 b31 #f]
+    ['add 'reg-reg-reg   'rm-rn-rd                           #b10001011000000000000000000000000 b31 #f]
     ['adr 'reg-lbl       'immlo-immhi-rd                     #b00010000000000000000000000000000 #f #f]
     ['and 'reg-reg-reg   'rm-rn-rd                           #b10001010000000000000000000000000 b31 #f]    
     ['b   'lbl           'imm26                              #b00010100000000000000000000000000 #f #f]
@@ -298,6 +299,7 @@
     ; todo: not sure N here works always set to one with 32 bhit as well?
     ['mov 'reg-imm       'imm16-rd                           #b11010010100000000000000000000000 b31 #f]
     ['movk 'reg-imm      'imm16-rd                           #b11110010100000000000000000000000 b31 #f]
+    ['mul  'reg-reg-reg  'rm-rn-rd                           #b10011011000000000111110000000000 b31 #f]
     ['mrs 'reg-sysreg    'rt-sysreg                          #b11010101001100000000000000000000 #f #f]
     ['orr 'reg-reg-reg   'rm-rn-rd                           #b10101010000000000000000000000000 b31 #f]
     ['ret 'reg           'rn                                 #b11010110010111110000000000000000 #f #f]
@@ -326,6 +328,7 @@
     ['stur 'reg_reg-imm_ 'imm9-rn-rd                         #b11111000000000000000000000000000 b30 is-byte]
 
     ['sub 'reg-reg-imm   'imm12-rn-rd                        #b11010001000000000000000000000000 b31 #f]
+    ['sub 'reg-reg-reg   'rm-rn-rd                           #b11001011000000000000000000000000 b31 #f]
     ['wfe 'none          'none                               #b11010101000000110010000001011111 #f #f]))))
 
 (struct context (data location minl maxl jump-table branches-waiting breakpoints) #:mutable #:transparent)
@@ -512,7 +515,7 @@
     (pattern x:id
              #:do [(define sym (syntax-e (attribute x)))
                    (define ocs
-                     (list 'add 'adr 'and 'b 'bl 'cbz 'cbnz 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'orr 'ret
+                     (list 'add 'adr 'and 'b 'bl 'cbz 'cbnz 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'mul 'orr 'ret
                            'str 'strb 'strh 'stur 'sub 'wfe))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
@@ -725,7 +728,7 @@
            )
          (wdb "closing")
          (close-output-port out)
-         (displayln "finished")
+         (displayln "")
          )]))
   
 (provide (all-defined-out))
