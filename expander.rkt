@@ -654,7 +654,9 @@
   (syntax-parse stx
     [(_ a ...)
      #'(begin
+         (displayln "begin")
          a ...
+         (displayln "DONE")
          (hash-for-each
           (context-branches-waiting prog)
           (λ (k dest)
@@ -723,7 +725,7 @@
            )
          (wdb "closing")
          (close-output-port out)
-
+         (displayln "finished")
          )]))
   
 (provide (all-defined-out))
