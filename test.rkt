@@ -113,6 +113,8 @@
 
 
 (aarch64 {
+     width = 1024
+     height = 768      
      set-offset = $1C
      clr-offset = $28
      udn-offset = $E4
@@ -328,6 +330,7 @@
      ;; (debug-reg x0)
 
      (debug-str "bpl" #t)
+
      adr x0 bpl:
 ;     add x0 x0 @20
      ldr w0 (x0 @0)
@@ -341,20 +344,26 @@
      ;convert to gpu address
      ldr x1 CONVERT:
      and x0 x0 x1
+     mov x8 x0
      mov x1 @255
-     mov x4 @600  ; rows
+:draw
+     mov x4 @height  ; rows
 :row     
-     mov x3 @$800
+     mov x3 @(/ width 8)
 :col
-     str w1 (x0 @0)
-     add w0 w0 @4
-;     add w1 w1 @32    
+     str x1 (x0 @0)
+     str x1 (x0 @8)
+     str x1 (x0 @16)
+     str x1 (x0 @24)
+     add x0 x0 @32
+     add w1 w1 @1
      sub x3 x3 @1
      cbnz x3 col-
 
      sub x4 x4 @1
      cbnz x4 row-
-     
+     mov x0 x8
+     b draw-
      (debug-str "DONEDONE" #t)
  :loop
      b loop:
@@ -370,8 +379,8 @@
   strb w0 (x1 @aux-io)
 })
      
-;; :send-char ; put char in w0
-;;   (PUSH x30)
+;; :SEND-CHAR ; PUT CHAR IN W0
+;;   (PUSH X30)
 ;;   (PUSH x0)
 ;;   (PUSH x1)
 ;;   (PUSH x2)
@@ -422,14 +431,14 @@
       (write-value-32 $48003)
       (write-value-32 8) ; value buffer size
       (write-value-32 0) ; 0 = request
-      (write-value-32 800) ; width
-      (write-value-32 600); height
+      (write-value-32 width) ; width
+      (write-value-32 height); height
     ; set virt
       (write-value-32 $48004)
       (write-value-32 8) ; value buffer size
       (write-value-32 8) ; 0 = request
-      (write-value-32 800) ; width
-      (write-value-32 600); height
+      (write-value-32 width) ; width
+      (write-value-32 height); height
 
     ; set virtoff
       (write-value-32 $48009)
