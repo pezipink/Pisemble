@@ -108,6 +108,15 @@
         ; shift left by 3, then splat the top 19 bits and lower 5 bits
         (let ([shifted (bitwise-and #x00FFFFE0 (arithmetic-shift imm19 3))])
           (bitwise-ior bin shifted))])     ]
+    ['imm19
+     (match-lambda
+       [(list bin) bin])
+     (match-lambda
+       [(list bin imm19)
+        ; we need to divide by 4 but also shift up 5 bits so we can instead
+        ; shift left by 3, then splat the top 19 bits and lower 5 bits
+        (let ([shifted (bitwise-and #x00FFFFE0 (arithmetic-shift imm19 3))])
+          (bitwise-ior bin shifted))])     ]
     ['imm16-rd
      (match-lambda
        [(list bin rd)        
@@ -215,6 +224,15 @@
      (match-lambda
        [(list bin) bin])
      ]
+    ['rm-rn
+     (match-lambda
+       [(list bin rn rm)
+        (let ([rm-shifted (arithmetic-shift rm 16)]
+              [rn-shifted (arithmetic-shift rn 5)])
+          (bitwise-ior-n rn-shifted rm-shifted bin))])
+     (match-lambda
+       [(list bin) bin])
+     ]
     ['rn
      (match-lambda
        [(list bin rn)
@@ -270,9 +288,29 @@
     ['adr 'reg-lbl       'immlo-immhi-rd                     #b00010000000000000000000000000000 #f #f]
     ['and 'reg-reg-reg   'rm-rn-rd                           #b10001010000000000000000000000000 b31 #f]    
     ['b   'lbl           'imm26                              #b00010100000000000000000000000000 #f #f]
+
+    ['b.eq 'lbl          'imm19                              #b01010100000000000000000000000000 #f #f] ; equal Z = 1
+    ['b.ne 'lbl          'imm19                              #b01010100000000000000000000000001 #f #f] ; not equal, Z = 0
+    ['b.cs 'lbl          'imm19                              #b01010100000000000000000000000010 #f #f] ; Carry set, C = 1
+    ['b.cc 'lbl          'imm19                              #b01010100000000000000000000000011 #f #f] ; Carry clear, C = 0    
+    ['b.mi 'lbl          'imm19                              #b01010100000000000000000000000100 #f #f] ; Minus, neg ; N = 1
+    ['b.pl 'lbl          'imm19                              #b01010100000000000000000000000101 #f #f] ; Positive or zero ; N = 0
+    ['b.vs 'lbl          'imm19                              #b01010100000000000000000000000110 #f #f] ; Overflow  ; V = 1
+    ['b.vc 'lbl          'imm19                              #b01010100000000000000000000000111 #f #f] ; No overfolow, V = 0
+    ['b.hi 'lbl          'imm19                              #b01010100000000000000000000001000 #f #f] ; Unsigned higher, C = 1 && z = 0
+    ['b.ls 'lbl          'imm19                              #b01010100000000000000000000001001 #f #f] ; Unsigned lower or same !(C=1&&z=0)
+    ['b.ge 'lbl          'imm19                              #b01010100000000000000000000001010 #f #f] ; Signed greater eq, N = V
+    ['b.lt 'lbl          'imm19                              #b01010100000000000000000000001011 #f #f] ; Signed le, N! = V   
+    ['b.gt 'lbl          'imm19                              #b01010100000000000000000000001100 #f #f] ; Signed gt, Z = 0 && N = V
+    ['b.le 'lbl          'imm19                              #b01010100000000000000000000001101 #f #f] ; Signed le or eq, !(Z=0 & N=V
+    ['b.al 'lbl          'imm19                              #b01010100000000000000000000001110 #f #f] ; Always
+
+
     ['bl  'lbl           'imm26                              #b10010100000000000000000000000000 #f #f]
     ['cbz 'reg-lbl       'imm19-rt                           #b10110100000000000000000000000000 b31 #f]
     ['cbnz 'reg-lbl      'imm19-rt                           #b10110101000000000000000000000000 b31 #f]
+    ['cmp  'reg-reg      'rm-rn                              #b11101011000000000000000000011111 b31 #f] 
+     
     ; post index
     ['ldr 'reg_reg_imm  'imm9-rn-rd                          #b11111000010000000000010000000000 b30 #f]
     ; pre index
@@ -515,7 +553,8 @@
     (pattern x:id
              #:do [(define sym (syntax-e (attribute x)))
                    (define ocs
-                     (list 'add 'adr 'and 'b 'bl 'cbz 'cbnz 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'mul 'orr 'ret
+                     (list 'add 'adr 'and 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
+                           'bl 'cbz 'cbnz 'cmp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'mul 'orr 'ret
                            'str 'strb 'strh 'stur 'sub 'wfe))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
@@ -532,7 +571,13 @@
                          (string->number (substring str 1))))]
              #:when (or isSp (and (or isX isW) (and (<= num 31)(>= num 0))))
              #:with regnum num
-             #:with is32 isW)))
+             #:with is32 isW))
+  (define-syntax-class register-32
+    (pattern x:register
+             #:when #'x.is32))
+  (define-syntax-class register-64
+    (pattern x:register
+             #:when (not #'x.is32))))
 (define-syntax (arm-line stx)
 ;  (writeln stx)
   (syntax-parse stx #:datum-literals (= !)
@@ -732,4 +777,4 @@
          )]))
   
 (provide (all-defined-out))
-(provide (for-syntax immediate system-register opcode register))
+(provide (for-syntax immediate system-register opcode register register-32 register-64))
