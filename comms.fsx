@@ -65,15 +65,15 @@ while true do
         | Number64 -> 
             //printfn "## reading number"
             // little endian
-            let mutable num = port.ReadByte()
-            num <- num ||| (port.ReadByte() <<< 8)
-            num <- num ||| (port.ReadByte() <<< 16)
-            num <- num ||| (port.ReadByte() <<< 24)
-            let mutable hnum = port.ReadByte()
-            hnum <- hnum &&& (port.ReadByte() <<< 8)
-            hnum <- hnum &&& (port.ReadByte() <<< 16)
-            hnum <- hnum &&& (port.ReadByte() <<< 24)
-            let final = ((int64 hnum) <<< 32) ||| (int64 num)
+            let mutable num = uint64(port.ReadByte())
+            num <- num ||| (uint64(port.ReadByte()) <<< 8)
+            num <- num ||| (uint64(port.ReadByte())<<< 16)
+            num <- num ||| (uint64(port.ReadByte()) <<< 24)
+            let mutable hnum = uint64(port.ReadByte())
+            hnum <- hnum ||| (uint64(port.ReadByte()) <<< 8)
+            hnum <- hnum ||| (uint64(port.ReadByte())<<< 16)
+            hnum <- hnum ||| (uint64(port.ReadByte()) <<< 24)
+            let final = ((uint64 hnum) <<< 32) ||| (uint64 num)
             printfn "%016x | %A" final final
             state <- Waiting
     with
@@ -84,6 +84,6 @@ while true do
 
 
 //while true do 
-//    let c = port.ReadChar()
-//    printfn $"{c}"
+//    let c = (uint8 (port.ReadByte()))
+//    printfn $"{c} : {c:x}"
 //    System.Threading.Thread.Sleep 1

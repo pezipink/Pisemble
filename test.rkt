@@ -1,5 +1,7 @@
 #lang pisemble
-(require (for-syntax syntax/parse))
+(require (for-syntax syntax/parse racket/stxparam))
+(require racket/stxparam)
+(require "periph.rkt" "stack.rkt")
 (set-emulator-program! emu "kernel8.img")
 
 (define-syntax (wait stx)
@@ -33,6 +35,28 @@
      #'(begin (debug-reg r)
               (debug-reg rn ...))]))
 
+(define-syntax (debug-reg-no-stack stx)
+  (syntax-parse stx
+    [(_ r:register)
+     #'{
+        ; preserve x0, it is used for passing char to send-char
+        ; first send code indicating whether a 32 or 64 bit number will be sent
+        mov x1 r
+        mov w0 @(if `r.is32 2 3)
+        bl send-char:
+        ; restore r into x0 and send first char
+        mov x0 x1
+        bl  send-char:
+        ; shift and send the remainig 3 or 7 bytes
+        (for ([_ (in-range (if `r.is32 3 7))])
+          { lsr x0 x0 @8
+            bl send-char: })
+ }]
+    [(_ r:register rn:register ...+)
+     #'(begin (debug-reg r)
+              (debug-reg rn ...))]))
+
+
 (define-syntax (dump-all-regs stx)
   (syntax-parse stx
     [(_)
@@ -43,74 +67,11 @@
      #'(begin (begin (debug-str name #f) (debug-reg reg)) ...)]))
   ; (debug-reg x0 w1 w2 x3)
 
-(define-syntax (subr stx)
-  ; define a subroutine. create a label for it and push/pop the supplied
-  ; regs as a prologue/epilogue. Of course, with a bit more work they
-  ; could be automatically detected
-  (syntax-parse stx
-    [(_ subroutine-name:id [used-reg:register ...] code )
-     #:with (reg-rev ...)
-     (datum->syntax this-syntax (reverse (syntax->list #'(used-reg ...))))
-     #:with label
-     (let* ([sym (syntax-e #'subroutine-name)]
-            [str (symbol->string sym)]
-            [label-str (format ":~a" str)]
-            [label (string->symbol label-str)])
-       (datum->syntax this-syntax label))
-     #'(begin
-         (try-set-jump-source `label set-jump-source-current)
-         (PUSH x30) ; always preserve return address register
-         (PUSH used-reg) ...
-         code
-         (POP reg-rev) ...
-         (POP x30)
-         { ret x30 })]))
 
 (define pi 'pi3)
 ;(define pi 'pi4)
 
-
-(define PERIPH-BASE
-  (cond
-    [(equal? pi 'pi3) $3F000000]
-    [(equal? pi 'pi4) $FE000000]
-    [else (error "unsupported pi model")]))
-(define GPIOFSEL (+ PERIPH-BASE $200000))
-(define GPIOFSEL1 (+ PERIPH-BASE $200004))
-(define GPIOUD   (+ PERIPH-BASE $2000E4))
 (define VCORE-MBOX (+ PERIPH-BASE $00B880))
-(define AUX-BASE (+ PERIPH-BASE $215000))
-
-(define-syntax (PUSH stx)
-  (syntax-parse stx
-    [(_ r:register)
-     #'{ str r [sp @-16] !}]))
-
-(define-syntax (PUSHH stx)
-  (syntax-parse stx
-    [(_ r:register)
-     #'{ strh r [sp @-16] !}]))
-
-(define-syntax (PUSHB stx)
-  (syntax-parse stx
-    [(_ r:register)
-     #'{ strb r [sp @-16] !}]))
-
-(define-syntax (POP stx)
-  (syntax-parse stx
-    [(_ r:register)
-     #'{ ldr r [sp] @16 }]))
-
-(define-syntax (POPH stx)
-  (syntax-parse stx
-    [(_ r:register)
-     #'{ ldrh r [sp] @16 }]))
-
-(define-syntax (POPB stx)
-  (syntax-parse stx
-    [(_ r:register)
-     #'{ ldrb r [sp] @16 }]))
-
 
 (aarch64 {
      width = 1024
@@ -141,10 +102,13 @@
 
      ;Mailbox channels
      mbox-ch-prop = $8  ; request to VC from ARM
-     
-     ; VideoCore message tags
+     ;; (define-rename-transformer-parameter test
+     ;;   (make-rename-transformer #'x1))
 
-     
+     ;;     (arm-line mov r #:immediate 3)))
+     msr daifclr @2
+     msr daifset @2
+     eret 
      mrs x0 mpidr_el1
      mov x1 @$3
      and x0 x0 x1
@@ -157,97 +121,44 @@
 :main
     ldr x1 START:
     mov sp x1
-    ldr x1 ALT5:
-    ldr x0 GPFSEL1:
-;;      ;mov x1 @$12  ; set 
-    str w1 (x0 @0)
-;;      ; now GPIO 14 and 15 is set to ALT5
-;;      ; set 14 and 15 to have no pullup/pulldown resistors
-;;      ; for this we need to set 00 in 2 places at CNTGRL_REG0
-;;      ; but for simplicity we'll just splat the whole thing
-      mov x1 @0
-      strh w1 (x0 @udn-offset)
 
-     ; now enable the mini-uart
-     ldr  x0 AUXB:
-     mov  x1 @1
-     strb w1 (x0 @aux-enables)  ; enable mini uart
-     mov  x1 @0
-     strb w1 (x0 @aux-cntrl)    ; disable auto flow and rx/tx
-     strb w1 (x0 @aux-ier)      ; disable interrupts
-     mov  x1 @3
-     strb w1 (x0 @aux-lcr)      ; 8 bit mode
-     mov  x1 @0
-     strb w1 (x0 @aux-mcr)      ; set rts line high
-     (cond
-       [(equal? pi 'pi3) {mov x1 @270}]
-       [(equal? pi 'pi4) {mov x1 @541}]
-       [else (error "unsupported pi model")])
-     strh w1 (x0 @aux-baud)    
-     mov  x1 @3
-     strb w1 (x0 @aux-cntrl)      ; enable tx rx
-
-     ; send string over the mini UART
-     (define (debug-str str newline?)
-       
-       {
-        (PUSH x0)
-        ; our protocol expects a byte of 1 to then
-        ; receive a string
-        mov w0 @1
-        bl send-char:
-       }
-       (for ([c str]) ; loop over each character
-         {
-          mov w0 @(char->integer c)
-          bl send-char:
-          })
-       (when newline?
-         {
-          mov w0 @$A ; line feed
-          bl  send-char:
-          mov w0 @$D ; cr
-          bl  send-char:
-          })
-       {
-        mov w0 @$0 ; null
-        bl  send-char:
-        (POP x0)
-       })
-
+    (init-uart)
 
      
-     ; send string over the mini UART
-     ;; (define (debug-w0)
-     ;;   {
-     ;;    ; our protocol expects a byte of 2 to then
-     ;;    ; receive a 32 bit number
-     ;;    (PUSH x0)
-     ;;    orr w8 w0 w0
-     ;;    mov w0 @2
-     ;;    bl send-char:
-     ;;    orr w0 w8 w8
-     ;;    bl  send-char:
-     ;;    lsr w0 w0 @8
-     ;;    bl  send-char:
-     ;;    lsr w0 w0 @8    
-     ;;    bl  send-char:
-     ;;    lsr w0 w0 @8    
-     ;;    bl  send-char:
-     ;;    (POP x0)
-     ;;   })
-
-     
-     bl dump-regs:     
+    ; bl dump-regs:     
 ;     (debug-str "HELLO WORLD!")
  ;    (debug-str "BAREMETAL RPI4 MEETS RACKETLANG!")
-     (debug-str "heres a number" #t)
-     mov w0 @$BAD
+     ;(debug-str "heres a number" #t)
+     mov x0 @$BAD
      lsl x0 x0 @16
-     movk w0 @$F00D
+     movk x0 @$F00D
+     lsl x0 x0 @16
+     movk x0 @$DEAD
+     lsl x0 x0 @16
+     movk x0 @$bEEf
+     (debug-reg-no-stack x0 )
+     
      (debug-reg x0 w0)
 
+     lsl x0 x0 @32
 
+     (debug-reg x0 w0)
+     
+     ldr x0 TEST:
+          (debug-reg-no-stack x0 )
+     (debug-reg x0 )
+     adr x0 TEST:
+     ldr x0 (x0 @0)
+     (debug-reg x0 )
+     lsr x0 x0 @8
+     (debug-reg x0 )
+     lsr x0 x0 @8
+     (debug-reg x0 )
+     lsr x0 x0 @8
+     (debug-reg x0 )
+     lsr x0 x0 @8
+     (debug-reg x0 )
+     
 :here     adr x0 here-
      (debug-reg w0)
 
@@ -263,72 +174,63 @@
      adr x0 fb:
      ldr w0 (x0 @0)
      (debug-reg x0)
+     adr x8 MBOX-MSG:
+     bl send-vcore-msg:
+; MSG START     
+;;      ldr x0 VC_MBOX: 
+;; :wait      
+;;      ldr w1 (x0 @mbox-status)
+;;      (debug-str "STATUS" #t)
+;;      (debug-reg x0)
 
+
+;;      ; and with 0x8000_0000
+;;      mov x2 @1
+;;      lsl x2 x2 @31
+;;      and x1 x1 x2
+;;      cbnz x1 wait-
+;;      (debug-str "RTS" #t)
+;;      ; attempt to call the mailbox interface
+;;      ; upper 28 bits are the address of the message
+;;      adr x2 MBOX-MSG:
+;;      mov x0 x2
+;; ;     (debug-w0)
+;;      ldr x0 VC_MBOX: 
+;;      ; lower four bits specify the mailbox channel,
+;;      ; in this case mbox-ch-prop (8)
+;;      mov x3 @mbox-ch-prop
+;;      orr x2 x2 x3 ; we dont support orr reg-reg-imm yet
+;;      ;now we wait until the FULL flag is not set so we can
+;;      ; send our message
+;; ;     (debug-reg w0)
+;; ;     (debug-reg w2)
+
+;;      str w2 (x0 @mbox-write)
+
+;; ;     (debug-str "WFR" #t)
+;;      ; now wait for a response 
+;; :wait      
+;;     ldr w1 (x0 @mbox-status)
+;; ;    (debug-str "STATUS")
+;; ;    (debug-reg x1)
+;;      ; and with 0x4000_0000
+;;      mov x2 @1
+;;      lsl x2 x2 @30
+;;      and x1 x1 x2
+;;      cbnz x1 wait-
+;; ;     (debug-str "DONE")
+;;      ; check if mbox-read = channel
+
+
+;;      ldr w1 (x0 @mbox-read)
+;;      (debug-reg x1)
+;;      mov x2 @%1111
+;;      and x1 x1 x2
+;;      sub x1 x1 @mbox-ch-prop
+;;      cbnz x1 wait-
+
+;MSG FINISH
      
-     ldr x0 VC_MBOX: 
-:wait      
-     ldr w1 (x0 @mbox-status)
-     (debug-str "STATUS" #t)
-     (debug-reg x0)
-     (debug-reg x1)
-
-     ; and with 0x8000_0000
-     mov x2 @1
-     lsl x2 x2 @31
-     and x1 x1 x2
-     cbnz x1 wait-
-     (debug-str "RTS" #t)
-     ; attempt to call the mailbox interface
-     ; upper 28 bits are the address of the message
-     adr x2 MBOX-MSG:
-     mov x0 x2
-;     (debug-w0)
-     ldr x0 VC_MBOX: 
-     ; lower four bits specify the mailbox channel,
-     ; in this case mbox-ch-prop (8)
-     mov x3 @mbox-ch-prop
-     orr x2 x2 x3 ; we dont support orr reg-reg-imm yet
-     ;now we wait until the FULL flag is not set so we can
-     ; send our message
-     (debug-reg w0)
-     (debug-reg w2)
-
-     str w2 (x0 @mbox-write)
-
-     (debug-str "WFR" #t)
-     ; now wait for a response 
-:wait      
-    ldr w1 (x0 @mbox-status)
-;    (debug-str "STATUS")
-;    (debug-reg x1)
-     ; and with 0x4000_0000
-     mov x2 @1
-     lsl x2 x2 @30
-     and x1 x1 x2
-     cbnz x1 wait-
-;     (debug-str "DONE")
-     ; check if mbox-read = channel
-
-
-     ldr w1 (x0 @mbox-read)
-     (debug-reg x1)
-     mov x2 @%1111
-     and x1 x1 x2
-     sub x1 x1 @mbox-ch-prop
-     cbnz x1 wait-
-
-     ;; (debug-str "response code")
-     ;; adr x0 MBOX-MSG:
-     ;; add x0 x0 @4
-     ;; ldr w0 (x0 @0)
-     ;; (debug-reg x0)
-
-     ;; (debug-str "inner response code")
-     ;; adr x0 MBOX-MSG:
-     ;; add x0 x0 @16
-     ;; ldr w0 (x0 @0)
-     ;; (debug-reg x0)
-
      (debug-str "bpl" #t)
 
      adr x0 bpl:
@@ -344,8 +246,16 @@
      ;convert to gpu address
      ldr x1 CONVERT:
      and x0 x0 x1
-     mov x8 x0
+
+; draw pixels!
+     
+     mov x8 x0  ; X8 holds base video memory
      mov x1 @255
+     lsl x1 x1 @32
+     movk x1 @255
+;     lsl x1 x1 @32
+;     movk x1 @255
+;     lsl x1 x1 @8
 :draw
      mov x4 @height  ; rows
 :row     
@@ -356,49 +266,64 @@
      str x1 (x0 @16)
      str x1 (x0 @24)
      add x0 x0 @32
-     add w1 w1 @1
+;     add w1 w1 @1
+     sub x3 x3 @1
+     cbnz x3 col-
+
+     sub x4 x4 @1
+     cbnz x4 row-
+; second page 
+;     mov x8 x0
+     mov x1 @$FF00
+;     lsl x1 x1 @32
+;     movk x1 @255
+;     lsl x1 x1 @8
+:draw
+     mov x4 @height  ; rows
+:row     
+     mov x3 @(/ width 8)
+:col
+     str x1 (x0 @0)
+     str x1 (x0 @8)
+     str x1 (x0 @16)
+     str x1 (x0 @24)
+     add x0 x0 @32
+;     add w1 w1 @1
      sub x3 x3 @1
      cbnz x3 col-
 
      sub x4 x4 @1
      cbnz x4 row-
      mov x0 x8
-     b draw-
+
+
+
+     
+     ; now we can scroll using the virtual offset message
+
+     
+:flip
+
+   mov x3 @0
+   bl page-flip:
+
+   (wait DELAY:)
+
+   mov x3 @height
+   bl page-flip:
+
+   (wait DELAY:)
+
+b flip-
+
+
      (debug-str "DONEDONE" #t)
  :loop
      b loop:
 
-(subr send-char [x0 x1 x2 x3] {
-  ldr  x1 AUXB:
-  ; wait for ready bit
-  mov  x2 @$20
-  :wait     
-  ldr  w3 (x1 @aux-lsr)
-  and  w3 w2 w3
-  cbz  w3 wait-
-  strb w0 (x1 @aux-io)
-})
-     
-;; :SEND-CHAR ; PUT CHAR IN W0
-;;   (PUSH X30)
-;;   (PUSH x0)
-;;   (PUSH x1)
-;;   (PUSH x2)
-;;   (PUSH x3)
-;;   ldr  x1 AUXB:
-;;   ; wait for ready bit
-;;   mov  x2 @$20
-;;   :wait     
-;;   ldr  w3 (x1 @aux-lsr)
-;;   and  w3 w2 w3
-;;   cbz  w3 wait-
-;;   strb w0 (x1 @aux-io)
-;;   (POP x3)
-;;   (POP x2)
-;;   (POP x1)
-;;   (POP x0)
-;;   (PUSH x30)
-;;   ret x30
+(create-send-char)
+
+
 
 :dump-regs
   (PUSH x30)
@@ -406,17 +331,83 @@
   (POP x30)
   ret x30
 
+     (subr page-flip ([ptr x0]) [x0 x1 x2] {
+  ;pass y value in x3
+  adr ptr MBOX-VOFFSET-MSG:
+mov x2 @4
+mov x1 @(* 8 4)
+str w1 (ptr @0)  ; msg->size
+add ptr ptr x2    ; +=4
+mov x1 @0
+str w1 (ptr @0) ; msg->request/response
+add ptr ptr x2    ; +=4
+mov x1 @4
+lsl x1 x1 @16
+movk x1 @$8009 
+str w1 (ptr @0) ;msg->tag
+add ptr ptr x2    ; +=4
+mov x1 @8
+str w1 (ptr @0) ; msg->value buffer size
+add ptr ptr x2    ; +=4
+mov x1 @0
+str w1 (ptr @0) ; msg->tag request
+add ptr ptr x2    ; +=4
+str w1 (ptr @0) ; msg->x offset
+add ptr ptr x2    ; +=4
+mov x1 x3
+str w1 (ptr @0) ; msg->y offset
+add ptr ptr x2    ; +=4
+mov x1 @0
+str w1 (ptr @0) ; msg->end tag
+adr x8 MBOX-VOFFSET-MSG:
+bl send-vcore-msg:
+    })
+; pass message address in x8
+(subr send-vcore-msg ()[x0 x1 x2 x3 x8]{
+     ldr x0 VC_MBOX: 
+:wait      
+     ldr w1 (x0 @mbox-status)
+     ; and with 0x8000_0000
+     mov x2 @1
+     lsl x2 x2 @31
+     and x1 x1 x2
+     cbnz x1 wait-
+     ; attempt to call the mailbox interface
+     ; upper 28 bits are the address of the message
+     ; expected to be in x8
+     ldr x0 VC_MBOX:
+     mov x2 x8
+     ; lower four bits specify the mailbox channel,
+     ; in this case mbox-ch-prop (8)
+     mov x3 @mbox-ch-prop
+     orr x2 x2 x3 ; we dont support orr reg-reg-imm yet
+     ; send our message
+     str w2 (x0 @mbox-write)
+     ; now wait for a response 
+:wait      
+    ldr w1 (x0 @mbox-status)
+     ; and with 0x4000_0000
+     mov x2 @1
+     lsl x2 x2 @30
+     and x1 x1 x2
+     cbnz x1 wait-
+     ; check if mbox-read = channel
+     ldr w1 (x0 @mbox-read)
+ ;    (debug-reg x1)
+     mov x2 @%1111
+     and x1 x1 x2
+     sub x1 x1 @mbox-ch-prop
+     cbnz x1 wait-
+})
+      
 
   ; the following values are used for loading 64 bit addresses/values via LDR(literal)
   ; and they must be 64 bit aliged otherwise the CPU faults!
   /= 8
-  :ALT5 (write-value-64 %010_010_000_000_000_000)
-  :GPFSEL (write-value-64 GPIOFSEL)
-  :GPFSEL1 (write-value-64 GPIOFSEL1)
-  :GPUD (write-value-64 GPIOUD)
-  :AUXB (write-value-64 AUX-BASE)
+  (periph-addresses)
   :DELAY (write-value-64 $FFFF)
   :VC_MBOX (write-value-64 VCORE-MBOX)
+  :TEST (write-value-64 $123456789ABCDEF)
   :START (write-value-64 $80000)
   :CONVERT (write-value-64 $3FFFFFFF)
   ; to communicate with the video core gpu we need an address that
@@ -438,14 +429,14 @@
       (write-value-32 8) ; value buffer size
       (write-value-32 8) ; 0 = request
       (write-value-32 width) ; width
-      (write-value-32 height); height
+      (write-value-32 (* 2 height)); height
 
     ; set virtoff
       (write-value-32 $48009)
       (write-value-32 8) ; value buffer size
       (write-value-32 0) ; 0 = request
       (write-value-32 0) ; x
-      (write-value-32 0); y
+      (write-value-32 384); y
 
    ; set depth 
       (write-value-32 $48005)
@@ -475,6 +466,21 @@
 
 
     (write-value-32 0) ;end tag
+  /= 16
+  :MBOX-VOFFSET-MSG
+    (write-value-32 (* 8 4)) ; total buffer size bytes including headers
+    (write-value-32 0) ; request / response code (0 = request)
+    ;begin tags
+    ; set virtoff
+      (write-value-32 $48009)
+      (write-value-32 8) ; value buffer size
+ :voffset-req
+(write-value-32 0) ; 0 = request
+      (write-value-32 0) ; x
+   :voffset-y
+      (write-value-32 0); y
+    (write-value-32 0) ;end tag
+
 
   ;; :MBOX-MSG
   ;;   (write-value-32 (* 8 4)) ; total buffer size bytes including headers
