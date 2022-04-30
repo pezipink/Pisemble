@@ -108,7 +108,9 @@
      ;;     (arm-line mov r #:immediate 3)))
      msr daifclr @2
      msr daifset @2
-     eret 
+     msr vbar_el1 x0
+     msr esr_el1 x0
+
      mrs x0 mpidr_el1
      mov x1 @$3
      and x0 x0 x1
@@ -323,7 +325,13 @@ b flip-
 
 (create-send-char)
 
+:enable-irq
+msr daifclr @2
+eret
 
+:disble-irq
+msr daifset @2
+eret
 
 :dump-regs
   (PUSH x30)

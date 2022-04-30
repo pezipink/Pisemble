@@ -200,6 +200,8 @@
           (bitwise-ior-n imm-shifted bin))])
      ]
 
+    ; this needs more work
+    ; the immeditadate value splits the register number
     ['sysreg-imm4
      (match-lambda
        [(list bin sr)
@@ -213,6 +215,14 @@
     ['rt-sysreg
      (match-lambda
        [(list bin rt sr)
+        (let ([sr-shifted (arithmetic-shift sr 5)])
+          (bitwise-ior-n sr-shifted rt bin))])
+     (match-lambda
+       [(list bin) bin])
+     ]
+    ['sysreg-rt
+     (match-lambda
+       [(list bin sr rt)
         (let ([sr-shifted (arithmetic-shift sr 5)])
           (bitwise-ior-n sr-shifted rt bin))])
      (match-lambda
@@ -353,6 +363,8 @@
     ['movk 'reg-imm      'imm16-rd                           #b11110010100000000000000000000000 b31 #f]
     ['mul  'reg-reg-reg  'rm-rn-rd                           #b10011011000000000111110000000000 b31 #f]
     ['mrs 'reg-sysreg    'rt-sysreg                          #b11010101001100000000000000000000 #f #f]
+    ['msr 'sysreg-reg    'sysreg-rt                          #b11010101000100000000000000000000 #f #f]
+
     ['msr 'sysreg-imm4   'sysreg-imm4                        #b11010101000000000000000000011111 #f #f]
     ['orr 'reg-reg-reg   'rm-rn-rd                           #b10101010000000000000000000000000 b31 #f]
     ['ret 'reg           'rn                                 #b11010110010111110000000000000000 #f #f]
@@ -564,10 +576,18 @@
     (pattern #:immediate))
   (define-syntax-class system-register
     #:description "system register"
-    #:datum-literals (mpidr_el1 daifset daifclr)
+    #:datum-literals (mpidr_el1 daifset daifclr vbar_el1 esr_el1)
+    ; these are not currently implemented properly.
+    ; the immediate and reg modes of mrs encode these
+    ; values differently. but you also can't se all regs
+    ; with both modes. are the moment daif will only work
+    ; with msr imm and mpidr with mrs reg and msr reg
     (pattern mpidr_el1 #:with regnum #x4005)
+    (pattern vbar_el1 #:with regnum #x4600)
+    (pattern esr_el1 #:with regnum #x4290)
     (pattern daifset #:with regnum #x1a06)
     (pattern daifclr #:with regnum #x1a07))
+
   (define-syntax-class opcode
     #:description "opcode"
     (pattern x:id
@@ -626,7 +646,7 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg #f (list `rn.regnum) '() #f))]
-   ;msr daifset @2
+;   msr daifset @2
    [(_ (~optional label:label) oc:opcode sr:system-register #:immediate n)
      #'(begin
          (~? (try-set-jump-source `label set-jump-source-current))
@@ -636,6 +656,11 @@
      #'(begin
          (~? (try-set-jump-source `label set-jump-source-current))
          (write-instruction 'oc 'reg-sysreg #f (list `rt.regnum `sr.regnum) '() #f))]
+   ; msr vbar_el1 x1
+   [(_ (~optional label:label) oc:opcode sr:system-register rt:register)
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (write-instruction 'oc 'sysreg-reg #f (list `sr.regnum `rt.regnum) '() #f))]
    ; mov x0 @1
    [(_ (~optional label:label) oc:opcode rt:register #:immediate n)
     #'(begin
@@ -649,7 +674,6 @@
         ;rewrite this as ADD (mov sp x is an alias for add sp x 0 )
       (write-instruction 'add 'reg-reg-imm `rt.is32 (list `rt.regnum `rn.regnum) (list 0) #f))
     ]
-
    ; mov wzr x1
    [(_ (~optional label:label) oc:opcode rt:register rm:register)
     #'(begin
