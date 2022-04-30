@@ -199,6 +199,17 @@
         (let ([imm-shifted (arithmetic-shift (bitwise-and #b111111111 imm9) 12)])
           (bitwise-ior-n imm-shifted bin))])
      ]
+
+    ['sysreg-imm4
+     (match-lambda
+       [(list bin sr)
+        (let ([sr-shifted (arithmetic-shift sr 5)])
+          (bitwise-ior-n sr-shifted bin))])
+     (match-lambda
+       [(list bin imm)
+        (let ([imm-shifted (arithmetic-shift imm 8)])
+          (bitwise-ior-n imm-shifted bin))])
+     ]
     ['rt-sysreg
      (match-lambda
        [(list bin rt sr)
@@ -309,8 +320,11 @@
     ['bl  'lbl           'imm26                              #b10010100000000000000000000000000 #f #f]
     ['cbz 'reg-lbl       'imm19-rt                           #b10110100000000000000000000000000 b31 #f]
     ['cbnz 'reg-lbl      'imm19-rt                           #b10110101000000000000000000000000 b31 #f]
-    ['cmp  'reg-reg      'rm-rn                              #b11101011000000000000000000011111 b31 #f] 
-     
+    ['cmp  'reg-reg      'rm-rn                              #b11101011000000000000000000011111 b31 #f]
+
+    ['eret 'none         'none                               #b11010110100111110000001111100000 #f #f] 
+
+    
     ; post index
     ['ldr 'reg_reg_imm  'imm9-rn-rd                          #b11111000010000000000010000000000 b30 #f]
     ; pre index
@@ -339,6 +353,7 @@
     ['movk 'reg-imm      'imm16-rd                           #b11110010100000000000000000000000 b31 #f]
     ['mul  'reg-reg-reg  'rm-rn-rd                           #b10011011000000000111110000000000 b31 #f]
     ['mrs 'reg-sysreg    'rt-sysreg                          #b11010101001100000000000000000000 #f #f]
+    ['msr 'sysreg-imm4   'sysreg-imm4                        #b11010101000000000000000000011111 #f #f]
     ['orr 'reg-reg-reg   'rm-rn-rd                           #b10101010000000000000000000000000 b31 #f]
     ['ret 'reg           'rn                                 #b11010110010111110000000000000000 #f #f]
     ; pre-index
@@ -545,21 +560,31 @@
 
 (begin-for-syntax
   (define-syntax-class immediate
+    #:description "immediate value"
     (pattern #:immediate))
   (define-syntax-class system-register
-    #:datum-literals (mpidr_el1)
-    (pattern mpidr_el1 #:with regnum #x4005))
+    #:description "system register"
+    #:datum-literals (mpidr_el1 daifset daifclr)
+    (pattern mpidr_el1 #:with regnum #x4005)
+    (pattern daifset #:with regnum #x1a06)
+    (pattern daifclr #:with regnum #x1a07))
   (define-syntax-class opcode
+    #:description "opcode"
     (pattern x:id
              #:do [(define sym (syntax-e (attribute x)))
                    (define ocs
                      (list 'add 'adr 'and 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
-                           'bl 'cbz 'cbnz 'cmp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'mul 'orr 'ret
+                           'bl 'cbz 'cbnz 'cmp 'eret 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'msr 'mul 'orr 'ret
                            'str 'strb 'strh 'stur 'sub 'wfe))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
+    #:description "register"
     (pattern x:id
-             #:do [(define str (symbol->string (syntax-e (attribute x))))
+      
+             #:do [; her we expand the identifier so this class works with
+                   ; rename-transformer allowing the user to rename registers
+                   (define actual (local-expand #'x 'expression #f))
+                   (define str (symbol->string (syntax-e  actual)))
                    (define isX (or (eq? (string-ref str 0) #\X)
                                    (eq? (string-ref str 0) #\x)))
                    (define isW (or (eq? (string-ref str 0) #\W)
@@ -574,10 +599,10 @@
              #:with is32 isW))
   (define-syntax-class register-32
     (pattern x:register
-             #:when #'x.is32))
+             #:when (syntax-e #'x.is32)))
   (define-syntax-class register-64
     (pattern x:register
-             #:when (not #'x.is32))))
+             #:when (not (syntax-e #'x.is32)))))
 (define-syntax (arm-line stx)
 ;  (writeln stx)
   (syntax-parse stx #:datum-literals (= !)
@@ -601,6 +626,11 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg #f (list `rn.regnum) '() #f))]
+   ;msr daifset @2
+   [(_ (~optional label:label) oc:opcode sr:system-register #:immediate n)
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (write-instruction 'oc 'sysreg-imm4 #f (list `sr.regnum) (list n) #f))]
    ; mrs x0 sys
    [(_ (~optional label:label) oc:opcode rt:register sr:system-register)
      #'(begin
@@ -650,6 +680,11 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-reg-reg `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum) '() #f))]
+   ; eret
+   [(_ (~optional label:label) oc:opcode)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'none #f (list ) '() #f))]
    
     [(_ label:label)
      #'(try-set-jump-source `label set-jump-source-current)]
@@ -662,6 +697,7 @@
 
     [(_ v:identifier = e:expr)
      #'(define v e)]
+
     [(_ e:expr ... ) #'(begin e ...) ]
     [(_ e ) #'e] ))
 
