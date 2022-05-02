@@ -1,10 +1,135 @@
+
 #lang pisemble
 (require (for-syntax syntax/parse racket/stxparam))
 (require racket/stxparam)
 (require "periph.rkt" "stack.rkt")
 (set-emulator-program! emu "kernel8.img")
 
-(define-syntax (wait stx)
+(define s-frame-size 256) ; size of all saved registers
+(define SYNC_INVALID_EL1t 0)
+(define IRQ_INVALID_EL1t 1)
+(define FIQ_INVALID_EL1t 2)
+(define ERROR_INVALID_EL1t 3)
+
+(define SYNC_INVALID_EL1h 4)
+(define IRQ_INVALID_EL1h 5)
+(define FIQ_INVALID_EL1h 6)
+(define ERROR_INVALID_EL1h 7)
+
+(define SYNC_INVALID_EL0_64 8)
+(define IRQ_INVALID_EL0_64 9)
+(define FIQ_INVALID_EL0_64 10)
+(define ERROR_INVALID_EL0_64 11)
+
+(define SYNC_INVALID_EL0_32 12)
+(define IRQ_INVALID_EL0_32 13)
+(define FIQ_INVALID_EL0_32 14)
+(define ERROR_INVALID_EL0_32 15)
+
+(define SYSTEM_TIMER_IRQ_0 1)
+(define SYSTEM_TIMER_IRQ_1 %10)
+
+(define SCTLR_RESERVED
+  (bitwise-ior (arithmetic-shift 3 28)
+               (arithmetic-shift 3 22)
+               (arithmetic-shift 1 20)
+               (arithmetic-shift 1 11)))
+(define SCTLR_EE_LITTLE_ENDIAN          (arithmetic-shift 0 25))
+(define SCTLR_EOE_LITTLE_ENDIAN         (arithmetic-shift 0 24))
+(define SCTLR_I_CACHE_DISABLED          (arithmetic-shift 0 12))
+(define SCTLR_D_CACHE_DISABLED          (arithmetic-shift 0 2))
+(define SCTLR_I_CACHE_ENABLED           (arithmetic-shift 1 12))
+(define SCTLR_D_CACHE_ENABLED           (arithmetic-shift 1 2))
+(define SCTLR_MMU_DISABLED              (arithmetic-shift 0 0))
+(define SCTLR_MMU_ENABLED               (arithmetic-shift 1 0))
+
+(define SCTLR_VALUE_MMU_DISABLED  (bitwise-ior SCTLR_RESERVED SCTLR_EE_LITTLE_ENDIAN SCTLR_I_CACHE_DISABLED SCTLR_D_CACHE_DISABLED SCTLR_MMU_DISABLED))
+
+; ***************************************
+; HCR_EL2, Hypervisor Configuration Register (EL2), Page 2487 of AArch64-Reference-Manual.
+; ***************************************
+
+(define HCR_RW            (arithmetic-shift 1 31))
+(define HCR_VALUE     HCR_RW)
+
+; ***************************************
+; SCR_EL3, Secure Configuration Register (EL3), Page 2648 of AArch64-Reference-Manual.
+; ***************************************
+
+(define SCR_RESERVED          (arithmetic-shift 3 4))
+(define SCR_RW        (arithmetic-shift 1 10))
+(define SCR_NS        (arithmetic-shift 1 0))
+(define SCR_VALUE             (bitwise-ior SCR_RESERVED SCR_RW SCR_NS))
+
+; ***************************************
+; SPSR_EL3, Saved Program Status Register (EL3) Page 389 of AArch64-Reference-Manual.
+; ***************************************
+
+(define SPSR_MASK_ALL       (arithmetic-shift 7 6))
+(define SPSR_EL1h     (arithmetic-shift 5 0))
+(define SPSR_VALUE      (bitwise-ior SPSR_MASK_ALL SPSR_EL1h))
+(define-syntax (kernel-entry stx)
+  (syntax-parse stx
+    [(_)
+     #'{
+;        (PUSH x0 x1 x2 x3 x4 x5 x6 x7 x8)
+
+        sub sp sp @s-frame-size
+        stp x0 x1   [sp @(* 16 0)]
+        stp x2 x3   [sp @(* 16 1)]
+        stp x4 x5   [sp @(* 16 2)]
+        stp x6 x7   [sp @(* 16 3)]
+        stp x8 x9   [sp @(* 16 4)]
+        stp x10 x11 [sp @(* 16 5)]
+        stp x12 x13 [sp @(* 16 6)]
+        stp x14 x15 [sp @(* 16 7)]
+        stp x16 x17 [sp @(* 16 8)]
+        stp x18 x19 [sp @(* 16 9)]
+        stp x20 x21 [sp @(* 16 10)]
+        stp x22 x23 [sp @(* 16 11)]
+        stp x24 x25 [sp @(* 16 12)]
+        stp x27 x27 [sp @(* 16 13)]
+        stp x28 x29 [sp @(* 16 14)]
+        str x30 [sp @(* 16 15)]
+
+        }]))
+(define-syntax (kernel-exit stx)
+  (syntax-parse stx
+    [(_)
+     #'{
+;        (POP x8 x7 x6 x5 x4 x3 x2 x1 x0)
+        ldp x0 x1   [sp @(* 16 0)]
+        ldp x2 x3   [sp @(* 16 1)]
+        ldp x4 x5   [sp @(* 16 2)]
+        ldp x6 x7   [sp @(* 16 3)]
+        ldp x8 x9   [sp @(* 16 4)]
+        ldp x10 x11 [sp @(* 16 5)]
+        ldp x12 x13 [sp @(* 16 6)]
+        ldp x14 x15 [sp @(* 16 7)]
+        ldp x16 x17 [sp @(* 16 8)]
+        ldp x18 x19 [sp @(* 16 9)]
+        ldp x20 x21 [sp @(* 16 10)]
+        ldp x22 x23 [sp @(* 16 11)]
+        ldp x24 x25 [sp @(* 16 12)]
+        ldp x26 x27 [sp @(* 16 13)]
+        ldp x28 x29 [sp @(* 16 14)]
+        ldr x30 [sp @(* 16 15)]
+        add sp sp @s-frame-size
+        eret
+        }]))
+(define-syntax (handle-invalid-entry stx)
+  (syntax-parse stx
+    [(_ type)
+     #'{
+        mov x0 @type
+        mrs x1 esr_el1
+        mrs x2 elr_el1
+        bl show-invalid-entry-message:
+        b err-hang:
+        }
+     ]))
+
+  (define-syntax (wait stx)
   (syntax-parse stx
     [(_ value)
      #'{ldr x2 value
@@ -35,27 +160,6 @@
      #'(begin (debug-reg r)
               (debug-reg rn ...))]))
 
-(define-syntax (debug-reg-no-stack stx)
-  (syntax-parse stx
-    [(_ r:register)
-     #'{
-        ; preserve x0, it is used for passing char to send-char
-        ; first send code indicating whether a 32 or 64 bit number will be sent
-        mov x1 r
-        mov w0 @(if `r.is32 2 3)
-        bl send-char:
-        ; restore r into x0 and send first char
-        mov x0 x1
-        bl  send-char:
-        ; shift and send the remainig 3 or 7 bytes
-        (for ([_ (in-range (if `r.is32 3 7))])
-          { lsr x0 x0 @8
-            bl send-char: })
- }]
-    [(_ r:register rn:register ...+)
-     #'(begin (debug-reg r)
-              (debug-reg rn ...))]))
-
 
 (define-syntax (dump-all-regs stx)
   (syntax-parse stx
@@ -70,6 +174,22 @@
 
 (define pi 'pi3)
 ;(define pi 'pi4)
+
+; the vector table is layed out 0x80 bytes
+; apart (
+(define-syntax (ventry stx)
+  (syntax-parse stx
+    [(_ vector:label-targ)
+     #'{
+        /= $80        
+        b vector
+        }]
+    [(_ vector:label-targ more ...+)
+     #'{
+        /= $80        
+        b vector
+        (ventry more ...)
+        }]))
 
 (define VCORE-MBOX (+ PERIPH-BASE $00B880))
 
@@ -102,31 +222,54 @@
 
      ;Mailbox channels
      mbox-ch-prop = $8  ; request to VC from ARM
-     ;; (define-rename-transformer-parameter test
-     ;;   (make-rename-transformer #'x1))
 
-     ;;     (arm-line mov r #:immediate 3)))
-     msr daifclr @2
-     msr daifset @2
-     msr vbar_el1 x0
-     msr esr_el1 x0
 
      mrs x0 mpidr_el1
      mov x1 @$3
      and x0 x0 x1
      cbz x0 main:
+     b hang:
  
+:err-hang
+     b err-hang-    
+
 :hang
      wfe
      b hang-     
 
 :main
+    ; get ready to switch from EL3 down to EL1
+    ldr     x0 SCTLR-VALUE-MMU-DISABLED:
+    msr	    sctlr_el1 x0		
+
+    ldr     x0 HCR-VALUE:
+    msr     hcr_el2 x0
+
+    ldr     x0 SCR-VALUE:
+    msr     scr_el3 x0
+
+    ldr     x0 SPSR-VALUE:
+    msr     spsr_el3 x0
+    
+    adr     x0 el1_entry:
+    msr     elr_el3 x0
+
+     eret			
+
+:el1_entry
+
     ldr x1 START:
     mov sp x1
-
     (init-uart)
+    (debug-str "init irq vector" #t)
+    bl irq-vector-init:
+;    (debug-str "init timer " #t)
+    bl timer-init:
+;    (debug-str "init ic" #t)
+    bl enable-interrupt-controller:
+;    (debug-str "enable irq" #t)
+    bl enable-irq:
 
-     
     ; bl dump-regs:     
 ;     (debug-str "HELLO WORLD!")
  ;    (debug-str "BAREMETAL RPI4 MEETS RACKETLANG!")
@@ -138,7 +281,7 @@
      movk x0 @$DEAD
      lsl x0 x0 @16
      movk x0 @$bEEf
-     (debug-reg-no-stack x0 )
+
      
      (debug-reg x0 w0)
 
@@ -147,7 +290,7 @@
      (debug-reg x0 w0)
      
      ldr x0 TEST:
-          (debug-reg-no-stack x0 )
+
      (debug-reg x0 )
      adr x0 TEST:
      ldr x0 (x0 @0)
@@ -306,6 +449,11 @@
      
 :flip
 
+     (debug-str "flip" #t)
+  ldr x0 TIMER_CLO:
+  ldr w0 (x0 @0)
+  (debug-reg x0)
+
    mov x3 @0
    bl page-flip:
 
@@ -325,13 +473,6 @@ b flip-
 
 (create-send-char)
 
-:enable-irq
-msr daifclr @2
-eret
-
-:disble-irq
-msr daifset @2
-eret
 
 :dump-regs
   (PUSH x30)
@@ -339,7 +480,7 @@ eret
   (POP x30)
   ret x30
 
-     (subr page-flip ([ptr x0]) [x0 x1 x2] {
+(subr page-flip ([ptr x0]) [x0 x1 x2] {
   ;pass y value in x3
   adr ptr MBOX-VOFFSET-MSG:
 mov x2 @4
@@ -406,19 +547,148 @@ bl send-vcore-msg:
      and x1 x1 x2
      sub x1 x1 @mbox-ch-prop
      cbnz x1 wait-
+
+
+     })
+
+
+:enable-irq
+msr daifclr @2
+ret x30
+
+:disable-irq
+msr daifset @2
+ret x30
+
+:show-invalid-entry-message
+(debug-str "unhandled exception" #t)
+(debug-reg x0 x1 x2)
+ret x30
+
+/= $800
+:vectors
+(ventry
+sync_invalid_el1t:
+irq_invalid_el1t:
+fiq_invalid_el1t:
+error_invalid_el1t:
+sync_invalid_el1h:
+el1_irq:
+fiq_invalid_el1h:
+error_invalid_el1h:
+sync_invalid_el0_64:
+irq_invalid_el0_64:
+fiq_invalid_el0_64:
+error_invalid_el0_64:
+sync_invalid_el0_32:
+irq_invalid_el0_32:
+fiq_invalid_el0_32:
+error_invalid_el0_32:
+ )
+
+:sync_invalid_el1t
+  (handle-invalid-entry  SYNC_INVALID_EL1t)
+
+:irq_invalid_el1t
+  (handle-invalid-entry  IRQ_INVALID_EL1t)
+
+:fiq_invalid_el1t
+  (handle-invalid-entry  FIQ_INVALID_EL1t)
+
+:error_invalid_el1t
+  (handle-invalid-entry  ERROR_INVALID_EL1t)
+
+:sync_invalid_el1h
+  (handle-invalid-entry  SYNC_INVALID_EL1h)
+
+:fiq_invalid_el1h
+  (handle-invalid-entry  FIQ_INVALID_EL1h)
+
+:error_invalid_el1h
+  (handle-invalid-entry  ERROR_INVALID_EL1h)
+
+:sync_invalid_el0_64
+  (handle-invalid-entry  SYNC_INVALID_EL0_64)
+
+:irq_invalid_el0_64
+  (handle-invalid-entry  IRQ_INVALID_EL0_64)
+
+:fiq_invalid_el0_64
+  (handle-invalid-entry  FIQ_INVALID_EL0_64)
+
+:error_invalid_el0_64
+  (handle-invalid-entry  ERROR_INVALID_EL0_64)
+
+:sync_invalid_el0_32
+  (handle-invalid-entry  SYNC_INVALID_EL0_32)
+
+:irq_invalid_el0_32
+  (handle-invalid-entry  IRQ_INVALID_EL0_32)
+
+:fiq_invalid_el0_32
+  (handle-invalid-entry  FIQ_INVALID_EL0_32)
+
+:error_invalid_el0_32
+  (handle-invalid-entry  ERROR_INVALID_EL0_32)
+
+:el1_irq
+  (kernel-entry)
+  bl  handle-irq:
+  (kernel-exit)
+
+:irq-vector-init
+  adr x0 vectors:
+  msr vbar_el1 x0
+  ret x30
+
+(subr enable-interrupt-controller () [x0 x1] {
+  ldr x0 ENABLE_IRQS_1:
+  mov x1 @SYSTEM_TIMER_IRQ_1                                                
+  str w1 (x0 @0)
 })
-      
+
+(subr timer-init () [x0 x1] {
+  ldr x0 TIMER_CLO:
+  ldr w0 (x0 @0)
+  (debug-str "timer val" #t)                               
+  (debug-reg x0)
+  ldr x1 DELAY2:
+  add w1 w0 w1
+  (debug-reg w1)
+  ldr x0 TIMER_C1:
+  str w1 (x0 @0)
+  
+  
+})
+
+(subr handle-irq () [] {
+(debug-str "handled interrupt" #t)
+ldr x0 TIMER_CS:
+mov x1 @%10
+str w1 (x0 @0)
+
+})
+
 
   ; the following values are used for loading 64 bit addresses/values via LDR(literal)
   ; and they must be 64 bit aliged otherwise the CPU faults!
   /= 8
   (periph-addresses)
-  :DELAY (write-value-64 $FFFF)
+:DELAY (write-value-64 $FFFFF)
+  :DELAY2 (write-value-64 200000)
   :VC_MBOX (write-value-64 VCORE-MBOX)
   :TEST (write-value-64 $123456789ABCDEF)
-  :START (write-value-64 $80000)
-  :CONVERT (write-value-64 $3FFFFFFF)
-  ; to communicate with the video core gpu we need an address that
+:START (write-value-64 $80000)
+;:START (write-value-64 $400000)
+:CONVERT (write-value-64 $3FFFFFFF)
+:HCR-VALUE (write-value-64 HCR_VALUE)
+:SCTLR-VALUE-MMU-DISABLED (write-value-64 SCTLR_VALUE_MMU_DISABLED)
+:SCR-VALUE (write-value-64 SCR_VALUE)
+:SPSR-VALUE (write-value-64 SPSR_VALUE)
+
+
+
+; to communicate with the video core gpu we need an address that
   ; is 16-byte algined - the lower 4 bits are not set. these are then
   ; used to specify the channel
   /= 16
@@ -489,58 +759,6 @@ bl send-vcore-msg:
       (write-value-32 0); y
     (write-value-32 0) ;end tag
 
-
-  ;; :MBOX-MSG
-  ;;   (write-value-32 (* 8 4)) ; total buffer size bytes including headers
-  ;;   (write-value-32 0) ; request / response code (0 = request)
-  ;;     ;begin tags
-  ;;     (write-value-32 $10004) ; Get firmware revision
-  ;;     (write-value-32 8) ; value buffer size
-  ;;     (write-value-32 0) ; 0 = request
-  ;;     (write-value-32 0)
-  ;;     (write-value-32 0); response should be written here
-  ;;   (write-value-32 0) ;end tag
-
-
-  ; SWITCH ON ACT LED
-;; :MBOX-MSG
-;;     (write-value-32 (* 8 4)) ; total buffer size bytes including headers
-;;     (write-value-32 0) ; request / response code (0 = request)
-;;       ;begin tags
-;;       (write-value-32 $38041) ;set led
-;;       (write-value-32 8) ; req length
-;;       (write-value-32 0) ; 0 = request
-;;       (write-value-32 130)
-;;       (write-value-32 1)
-;;     (write-value-32 0) ;end tag
     
 })
-
-;BLINKY 1!!
-;; (aarch64 {
-;;      set-offset = $1C
-;;      clr-offset = $28
-
-;;      ldr x0 GPFSEL:
-;;      mov x1 @1
-;;      strb w1 (x0 @0)
-;;      ; now GPIO 0 is set to OUTPUT
-;;  :loop
-;;      ; blink thy LED
-;;      strb x1 (x0 @set-offset)
-;;      (wait DELAY:)
-;;      strb x1 (x0 @clr-offset)
-;;      (wait DELAY:)
-;;      b loop:
-     
-;;   ;this is the base for gpio fsel on the RPI4
-;;   ;; :GPFSEL (write-value-32 $FE200000)
-;;   ;; (write-value-32 $0)
-;;   :GPFSEL (write-value-64 GPIOFSEL)
-
-  
-;;   :DELAY (write-value-64 $FFFF)
-  
-
-;; })
 
