@@ -168,6 +168,18 @@
         (let ([immr (arithmetic-shift imm6 16)])
           (bitwise-ior-n immr bin))])
      ]
+    ['imm7-rd2-rn-rd 
+     (match-lambda
+       [(list bin rd rd2 rn)
+        (let ([rn-shifted (arithmetic-shift rn 5)]
+              [rd2-shifted (arithmetic-shift rd2 10)])
+          (bitwise-ior-n rn-shifted rd2-shifted rd bin))])
+     (match-lambda
+       [(list bin imm7)
+        (let ([immr (arithmetic-shift imm7 15)])
+          (bitwise-ior-n immr bin))])
+     ]
+    
     ['imm9-rn-rd
      (match-lambda
        [(list bin rd rn)
@@ -334,24 +346,18 @@
 
     ['eret 'none         'none                               #b11010110100111110000001111100000 #f #f] 
 
-    
-    ; post index
+    ['ldp 'reg-reg_reg-imm_ 'imm7-rd2-rn-rd                 #b10101001010000000000000000000000 b31 shift-2-or-3]
     ['ldr 'reg_reg_imm  'imm9-rn-rd                          #b11111000010000000000010000000000 b30 #f]
-    ; pre index
     ['ldr 'reg_reg-imm_excla  'imm9-rn-rd                    #b11111000010000000000110000000000 b30 #f]
 
     ['ldr 'reg-lbl       'imm19-rt                           #b01011000000000000000000000000000 b30 #f]
     ['ldr  'reg_reg-imm_ 'imm12-rn-rd                       #b11111001010000000000000000000000 b30 shift-2-or-3]
-    ; post index
     ['ldrh 'reg_reg_imm  'imm9-rn-rd                         #b01111000010000000000010000000000 #f #f]
-    ; pre index
     ['ldrh 'reg_reg-imm_excla  'imm9-rn-rd                   #b01111000010000000000110000000000 #f #f]
     
     ['ldrh 'reg_reg-imm_ 'imm12-rn-rd                        #b01111001010000000000000000000000 b31 #f]
 
-    ; post index
     ['ldrb 'reg_reg_imm  'imm9-rn-rd                         #b00111000010000000000010000000000 b30 #f]
-    ; pre index
     ['ldrb 'reg_reg-imm_excla  'imm9-rn-rd                   #b00111000010000000000110000000000 #f #f]
     ['ldrb 'reg_reg-imm_ 'imm12-rn-rd                        #b00111001010000000000000000000000 #f  #f]
     ['lsl 'reg-reg-imm   'immr-imms-rn-rd                    #b11010011010000000000000000000000 lsl-imm-special #f]
@@ -368,25 +374,22 @@
     ['msr 'sysreg-imm4   'sysreg-imm4                        #b11010101000000000000000000011111 #f #f]
     ['orr 'reg-reg-reg   'rm-rn-rd                           #b10101010000000000000000000000000 b31 #f]
     ['ret 'reg           'rn                                 #b11010110010111110000000000000000 #f #f]
-    ; pre-index
+
+    ['stp 'reg-reg_reg-imm_ 'imm7-rd2-rn-rd                  #b10101001000000000000000000000000 b31 shift-2-or-3]
+
     ['str 'reg_reg-imm_excla  'imm9-rn-rd                    #b11111000000000000000110000000000 b30 #f]
-    ; post index
     ['str 'reg_reg_imm    'imm9-rn-rd                        #b11111000000000000000010000000000 b30 #f]
 
     ;unsigned offset mode str. divide imm12 by 4 or 8 first 
     ['str 'reg_reg-imm_  'imm12-rn-rd                        #b11111001000000000000000000000000 b30 shift-2-or-3]
 
-    ; pre-index
     ['strh 'reg_reg-imm_excla 'imm9-rn-rd                    #b01111000000000000000110000000000 #f #f]
-    ; post-index
     ['strh 'reg_reg_imm   'imm9-rn-rd                        #b01111000000000000000010000000000 #f #f]
     
     ;unsigned offset mode, 32 bit only. always shift by 4
     ['strh 'reg_reg-imm_ 'imm12-rn-rd                        #b01111001000000000000000000000000 b31 always-shift-1]
 
-    ; pre-index
     ['strb 'reg_reg-imm_excla 'imm9-rn-rd                    #b00111000000000000000110000000000 #f #f]
-    ; post-index
     ['strb 'reg_reg_imm   'imm9-rn-rd                        #b00111000000000000000010000000000 #f #f]
     ;unsigned offset mode, 32 bit only]
     ['strb 'reg_reg-imm_ 'imm12-rn-rd                        #b00111001000000000000000000000000 b31 #f]
@@ -576,15 +579,23 @@
     (pattern #:immediate))
   (define-syntax-class system-register
     #:description "system register"
-    #:datum-literals (mpidr_el1 daifset daifclr vbar_el1 esr_el1)
+    #:datum-literals (mpidr_el1 daifset daifclr vbar_el1 esr_el1 elr_el1 sctlr_el1 hcr_el2 scr_el3 spsr_el3 elr_el3)
     ; these are not currently implemented properly.
     ; the immediate and reg modes of mrs encode these
-    ; values differently. but you also can't se all regs
-    ; with both modes. are the moment daif will only work
+    ; values differently. but you also can't set/get all regs
+    ; with both modes. at the moment daif will only work
     ; with msr imm and mpidr with mrs reg and msr reg
+    ; this needs work in general. but it will do for my current needs
     (pattern mpidr_el1 #:with regnum #x4005)
     (pattern vbar_el1 #:with regnum #x4600)
     (pattern esr_el1 #:with regnum #x4290)
+    (pattern hcr_el2 #:with regnum #x6088)
+    (pattern scr_el3 #:with regnum #x7088)
+    (pattern spsr_el3 #:with regnum #x7200)
+    (pattern elr_el3 #:with regnum #x7201)
+
+    (pattern sctlr_el1 #:with regnum #x4080)
+    (pattern elr_el1 #:with regnum #x4201)
     (pattern daifset #:with regnum #x1a06)
     (pattern daifclr #:with regnum #x1a07))
 
@@ -594,8 +605,8 @@
              #:do [(define sym (syntax-e (attribute x)))
                    (define ocs
                      (list 'add 'adr 'and 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
-                           'bl 'cbz 'cbnz 'cmp 'eret 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'msr 'mul 'orr 'ret
-                           'str 'strb 'strh 'stur 'sub 'wfe))]
+                           'bl 'cbz 'cbnz 'cmp 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'msr 'mul 'orr 'ret
+                           'stp 'str 'strb 'strh 'stur 'sub 'wfe))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
     #:description "register"
@@ -699,6 +710,11 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg_reg_imm `rt.is32 (list `rt.regnum `rn.regnum) (list n) #f))]
+   ;ldp x1 x2 [sp @4]
+   [(_ (~optional label:label) oc:opcode rt:register rt2:register (rn:register #:immediate n))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-reg_reg-imm_ `rt.is32 (list `rt.regnum `rt2.regnum `rn.regnum) (list n) #f))]
    ; add x1 x2 x4
    [(_ (~optional label:label) oc:opcode rt:register rn:register rm:register)
     #'(begin
@@ -837,4 +853,4 @@
          )]))
   
 (provide (all-defined-out))
-(provide (for-syntax immediate system-register opcode register register-32 register-64))
+(provide (for-syntax immediate system-register opcode register register-32 register-64 label label-targ))

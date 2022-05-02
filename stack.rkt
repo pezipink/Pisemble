@@ -42,6 +42,9 @@
 
 (define-syntax (PUSH stx)
   (syntax-parse stx
+    [(_ r:register rn ...+)
+     #'{ str r [sp @-16] !
+         (PUSH rn ...)    }]
     [(_ r:register)
      #'{ str r [sp @-16] !}]))
 
@@ -57,6 +60,9 @@
 
 (define-syntax (POP stx)
   (syntax-parse stx
+    [(_ r:register rn ...+)
+     #'{ ldr r [sp] @16
+         (POP rn ...)    }]
     [(_ r:register)
      #'{ ldr r [sp] @16 }]))
 
