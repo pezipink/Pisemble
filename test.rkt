@@ -269,7 +269,9 @@
     bl enable-interrupt-controller:
 ;    (debug-str "enable irq" #t)
     bl enable-irq:
-
+  ldr x0 SMICS:
+  mov x1 @0
+  str w1 (x0 @0)
     ; bl dump-regs:     
 ;     (debug-str "HELLO WORLD!")
  ;    (debug-str "BAREMETAL RPI4 MEETS RACKETLANG!")
@@ -284,6 +286,9 @@
 
      
      (debug-reg x0 w0)
+
+     ldr x1 FAKE-ISR: ; SMI 
+     (debug-reg x1)
 
      lsl x0 x0 @32
 
@@ -447,24 +452,24 @@
      ; now we can scroll using the virtual offset message
 
      
-:flip
+;; :flip
 
-     (debug-str "flip" #t)
-  ldr x0 TIMER_CLO:
-  ldr w0 (x0 @0)
-  (debug-reg x0)
+;;      (debug-str "flip" #t)
+;;   ldr x0 TIMER_CLO:
+;;   ldr w0 (x0 @0)
+;;   (debug-reg x0)
 
-   mov x3 @0
-   bl page-flip:
+;;    mov x3 @0
+;;    bl page-flip:
 
-   (wait DELAY:)
+;;    (wait DELAY:)
 
-   mov x3 @height
-   bl page-flip:
+;;    mov x3 @height
+;;    bl page-flip:
 
-   (wait DELAY:)
+;;    (wait DELAY:)
 
-b flip-
+;; b flip-
 
 
      (debug-str "DONEDONE" #t)
@@ -642,8 +647,11 @@ error_invalid_el0_32:
   ret x30
 
 (subr enable-interrupt-controller () [x0 x1] {
-  ldr x0 ENABLE_IRQS_1:
-  mov x1 @SYSTEM_TIMER_IRQ_1                                                
+  ;; ldr x0 ENABLE_IRQS_1:
+  ;; mov x1 @SYSTEM_TIMER_IRQ_1      
+  ;; str w1 (x0 @0)
+  ldr x0 ENABLE_IRQS_2:
+  ldr x1 FAKE-ISR: ; SMI 
   str w1 (x0 @0)
 })
 
@@ -662,10 +670,24 @@ error_invalid_el0_32:
 })
 
 (subr handle-irq () [] {
-(debug-str "handled interrupt" #t)
-ldr x0 TIMER_CS:
-mov x1 @%10
-str w1 (x0 @0)
+;(debug-str "handled interrupt" #t)
+;; ldr x0 TIMER_CS:
+;; mov x1 @%10
+;; str w1 (x0 @0)
+  ldr x0 SMICS:
+  mov x1 @0
+  str w1 (x0 @0)
+
+  ldr x1 CURRENT-PAGE:
+  cbnz x1 f+
+  mov x3 @height
+  b done+
+:f
+  mov x3 @0
+:done
+  adr x1 CURRENT-PAGE:
+  str x3 (x1 @0)
+  bl page-flip:
 
 })
 
@@ -685,8 +707,8 @@ str w1 (x0 @0)
 :SCTLR-VALUE-MMU-DISABLED (write-value-64 SCTLR_VALUE_MMU_DISABLED)
 :SCR-VALUE (write-value-64 SCR_VALUE)
 :SPSR-VALUE (write-value-64 SPSR_VALUE)
-
-
+:FAKE-ISR (write-value-64 $10000)
+:CURRENT-PAGE (write-value-64 0)
 
 ; to communicate with the video core gpu we need an address that
   ; is 16-byte algined - the lower 4 bits are not set. these are then
