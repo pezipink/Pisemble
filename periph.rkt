@@ -9,6 +9,7 @@
     [(equal? pi 'pi3) $3F000000]
     [(equal? pi 'pi4) $FE000000]
     [else (error "unsupported pi model")]))
+(define SMICS (+ PERIPH-BASE $600000))
 (define GPIOFSEL (+ PERIPH-BASE $200000))
 (define GPIOFSEL1 (+ PERIPH-BASE $200004))
 (define GPIOUD   (+ PERIPH-BASE $2000E4))
@@ -70,6 +71,7 @@
 :TIMER_C1 (write-value-64 TIMER_C1)
 :TIMER_C2 (write-value-64 TIMER_C2)
 :TIMER_C3 (write-value-64 TIMER_C3)
+:SMICS (write-value-64 SMICS)
 })
 
 (define (init-uart) {
