@@ -268,7 +268,7 @@
 ;    (debug-str "init ic" #t)
     bl enable-interrupt-controller:
 ;    (debug-str "enable irq" #t)
-    bl enable-irq:
+;    bl enable-irq:
   ldr x0 SMICS:
   mov x1 @0
   str w1 (x0 @0)
@@ -284,7 +284,17 @@
      lsl x0 x0 @16
      movk x0 @$bEEf
 
-     
+
+     (debug-reg x0 w0)
+
+     (debug-str "isqr 1" #t)
+     mov x0 @1
+     bl isqr:
+     (debug-reg x0 w0)
+
+     (debug-str "isqr 100" #t)
+     mov x0 @100
+     bl isqr:
      (debug-reg x0 w0)
 
      ldr x1 FAKE-ISR: ; SMI 
@@ -400,6 +410,8 @@
 ; draw pixels!
      
      mov x8 x0  ; X8 holds base video memory
+     adr x9 VMEM:
+     str x8 (x9 @0)  ; store memory pointer in VMEM
      mov x1 @255
      lsl x1 x1 @32
      movk x1 @255
@@ -473,8 +485,9 @@
 
 
      (debug-str "DONEDONE" #t)
+         bl enable-irq:
  :loop
-     b loop:
+     b loop-
 
 (create-send-char)
 
@@ -515,7 +528,33 @@ mov x1 @0
 str w1 (ptr @0) ; msg->end tag
 adr x8 MBOX-VOFFSET-MSG:
 bl send-vcore-msg:
-    })
+})
+
+; calculate integer square root with linear binary search
+; X0 input; X0 output; no stack
+(subr isqr ([y x0]
+            [L x1]
+            [M x2]
+            [R x3]) [] {
+    mov L @0     ; L = 0
+    add R y @1   ; R = y + 1                         
+:loop
+    sub x4 R @1  ;r - 1 todo: need subs
+    cmp L x4
+    b.eq done+   ; while L != r -1 
+    add M L R    ; M = L + R
+    lsr M M @1   ; M /= 2
+    mul x4 M M
+    cmp x4 y
+    b.le lte:
+    mov R M 
+    b loop-
+:lte
+    mov L M
+    b loop-
+:done
+    mov X0 L
+})
 ; pass message address in x8
 (subr send-vcore-msg ()[x0 x1 x2 x3 x8]{
      ldr x0 VC_MBOX: 
@@ -655,6 +694,7 @@ error_invalid_el0_32:
   str w1 (x0 @0)
 })
 
+
 (subr timer-init () [x0 x1] {
   ldr x0 TIMER_CLO:
   ldr w0 (x0 @0)
@@ -669,12 +709,63 @@ error_invalid_el0_32:
   
 })
 
+(subr get-back-buffer () [x1 x2] {
+    ldr x0 VMEM:
+    mov x1 x0
+    ;x0 now has the base video memory pointer
+    ; if CURRENT-PAGE is 0 then we want to send
+    ; pointer + ((height / 2) * width)
+
+    ldr x0 CURRENT-PAGE:
+    cbz x0 done+
+ ;   (debug-str "HERE" #t)
+    ldr x2 FRAME-SIZE:
+    add x1 x1 x2
+
+:done ; return in x0
+    mov x0 x1
+})
+
+(subr update-gfx ([vptr x0]
+                  [x x1]
+                  [y x2]
+                  [colour w3]
+                  [temp x4]
+                  ) [x0 x1 x2 x3 x4]
+                    {
+   bl get-back-buffer:   ; x0 = base memory address                      
+;   (debug-reg vptr)
+
+   ;; mov colour @0
+   ;; str colour (vptr @0)
+   ;; str colour (vptr @8)
+   ;; str colour (vptr @16)
+   ;; str colour (vptr @24)
+
+      
+   mov y @(/ height 2)
+   mov colour @$FFFF
+:y-loop
+   mov x @(/ width 2)
+:x-loop
+   str colour (vptr @0)
+   sub x x @1
+   add vptr vptr @4
+   cbnz x x-loop-
+   sub y y @1
+   sub vptr vptr @(* (/ width 2) 4)
+   ldr temp ROW-SIZE:
+   add vptr vptr temp
+
+   cbnz y y-loop-
+})                        
+
 (subr handle-irq () [] {
 ;(debug-str "handled interrupt" #t)
 ;; ldr x0 TIMER_CS:
 ;; mov x1 @%10
 ;; str w1 (x0 @0)
-  ldr x0 SMICS:
+  ldr x0 SMICS:  ; ack vsync
   mov x1 @0
   str w1 (x0 @0)
 
@@ -688,7 +779,7 @@ error_invalid_el0_32:
   adr x1 CURRENT-PAGE:
   str x3 (x1 @0)
   bl page-flip:
-
+  bl update-gfx:
 })
 
 
@@ -709,6 +800,9 @@ error_invalid_el0_32:
 :SPSR-VALUE (write-value-64 SPSR_VALUE)
 :FAKE-ISR (write-value-64 $10000)
 :CURRENT-PAGE (write-value-64 0)
+:FRAME-SIZE (write-value-64 (* width height 4))
+:ROW-SIZE (write-value-64 (* width 4))
+:VMEM (write-value-64 0)
 
 ; to communicate with the video core gpu we need an address that
   ; is 16-byte algined - the lower 4 bits are not set. these are then
@@ -781,6 +875,8 @@ error_invalid_el0_32:
       (write-value-32 0); y
     (write-value-32 0) ;end tag
 
-    
+
+
+
 })
 
