@@ -124,6 +124,8 @@
         (bitwise-ior-n rd bin)])
      (match-lambda
        [(list bin imm16)
+        (when (> (bitwise-and #xFFFF0000 imm16) 0 )
+          (error (format "immediate value ~x is larger than 16 bits" imm16)))
         ; shift up 5 bits, keep 16 bits
         (let ([shifted (arithmetic-shift (bitwise-and #xFFFF imm16 ) 5) ])
           (bitwise-ior-n bin shifted))])
