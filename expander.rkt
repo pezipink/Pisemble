@@ -343,7 +343,7 @@
     ['cbz 'reg-lbl       'imm19-rt                           #b10110100000000000000000000000000 b31 #f]
     ['cbnz 'reg-lbl      'imm19-rt                           #b10110101000000000000000000000000 b31 #f]
     ['cmp  'reg-reg      'rm-rn                              #b11101011000000000000000000011111 b31 #f]
-
+    ['eor 'reg-reg-reg   'rm-rn-rd                           #b11001010000000000000000000000000 b31 #f]
     ['eret 'none         'none                               #b11010110100111110000001111100000 #f #f] 
 
     ['ldp 'reg-reg_reg-imm_ 'imm7-rd2-rn-rd                 #b10101001010000000000000000000000 b31 shift-2-or-3]
@@ -370,8 +370,8 @@
     ['mul  'reg-reg-reg  'rm-rn-rd                           #b10011011000000000111110000000000 b31 #f]
     ['mrs 'reg-sysreg    'rt-sysreg                          #b11010101001100000000000000000000 #f #f]
     ['msr 'sysreg-reg    'sysreg-rt                          #b11010101000100000000000000000000 #f #f]
-
     ['msr 'sysreg-imm4   'sysreg-imm4                        #b11010101000000000000000000011111 #f #f]
+    ['neg 'reg-reg       'rm-rd                              #b11001011000000000000001111100000 b31 #f]
     ['orr 'reg-reg-reg   'rm-rn-rd                           #b10101010000000000000000000000000 b31 #f]
     ['ret 'reg           'rn                                 #b11010110010111110000000000000000 #f #f]
 
@@ -605,7 +605,7 @@
              #:do [(define sym (syntax-e (attribute x)))
                    (define ocs
                      (list 'add 'adr 'and 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
-                           'bl 'cbz 'cbnz 'cmp 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'msr 'mul 'orr 'ret
+                           'bl 'cbz 'cbnz 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'msr 'mul 'neg 'orr 'ret
                            'stp 'str 'strb 'strh 'stur 'sub 'wfe))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register

@@ -44,6 +44,7 @@
 (define SCTLR_MMU_ENABLED               (arithmetic-shift 1 0))
 
 (define SCTLR_VALUE_MMU_DISABLED  (bitwise-ior SCTLR_RESERVED SCTLR_EE_LITTLE_ENDIAN SCTLR_I_CACHE_DISABLED SCTLR_D_CACHE_DISABLED SCTLR_MMU_DISABLED))
+(define SCTLR_VALUE_MMU_DISABLED2  (bitwise-ior SCTLR_RESERVED SCTLR_EE_LITTLE_ENDIAN SCTLR_I_CACHE_ENABLED SCTLR_D_CACHE_ENABLED SCTLR_MMU_DISABLED))
 
 ; ***************************************
 ; HCR_EL2, Hypervisor Configuration Register (EL2), Page 2487 of AArch64-Reference-Manual.
@@ -237,7 +238,13 @@
      wfe
      b hang-     
 
-:main
+     :main
+
+     ;; mov     x0, #3 << 20
+;;     msr     cpacr_el1, x0	 // Enable FP/SIMD at EL1
+   (write-value-32 $d2a00600)
+   (write-value-32 $d5181040)
+     
     ; get ready to switch from EL3 down to EL1
     ldr     x0 SCTLR-VALUE-MMU-DISABLED:
     msr	    sctlr_el1 x0		
@@ -485,7 +492,14 @@
 
 
      (debug-str "DONEDONE" #t)
-         bl enable-irq:
+     bl enable-irq:
+
+     mov x0 @100
+   (write-value-32 $9E220000) ;scvtf s0 x0
+   (write-value-32 $1E21C000) ;fsqrt s0 s0
+   (write-value-32 $9E250000) ; fcvtau x0 s0
+     
+     bl update-gfx:
  :loop
      b loop-
 
@@ -726,28 +740,90 @@ error_invalid_el0_32:
     mov x0 x1
 })
 
-(subr update-gfx ([vptr x0]
+(subr update-gfx (
                   [x x1]
                   [y x2]
                   [colour w3]
                   [temp x4]
+                  [dx x5]
+                  [dy x6]
+                  [dx2 x7]
+                  [dy2 x8]
+                  [vptr x9]
+                  [pAX x10]
+                  [pAY x11]
+                  [pBX x12]
+                  [pBY x13]
+                  [row-size x14]
+
                   ) [x0 x1 x2 x3 x4]
                     {
-   bl get-back-buffer:   ; x0 = base memory address                      
-;   (debug-reg vptr)
+ ;   ldr row-size ROW-SIZE:
+:loop
+ ldr x0 finished-rendering:
+ cbnz x0 loop-
+; (debug-str "render" #t)
+ bl get-back-buffer:
+ mov vptr x0  
 
-   ;; mov colour @0
-   ;; str colour (vptr @0)
-   ;; str colour (vptr @8)
-   ;; str colour (vptr @16)
-   ;; str colour (vptr @24)
+ 
+   ldr pAX pointAX:
+   ldr pAY pointAY:
+   ldr pBX pointBX:
+   ldr pBY pointBY:
 
       
    mov y @(/ height 2)
-   mov colour @$FFFF
+;   mov colour @$FFFF
 :y-loop
-   mov x @(/ width 2)
+mov x @(/ width 2)
+  ; calculate distance of this pixel to point a and b
+   mov dy y
+   mov temp pAY
+   sub dy dy temp
+   mul dy dy dy
+
+   mov dy2 y
+   mov temp pBY
+   sub dy2 dy2 temp
+   mul dy2 dy2 dy2
+
+
 :x-loop
+   mov dx x
+   mov temp pAX
+   sub dx dx temp
+   mul dx dx dx
+
+   mov dx2 x
+   mov temp pBX
+   sub dx2 dx2 temp
+   mul dx2 dx2 dx2
+
+   add x0 dx dy   ; sqrt dx + dy
+
+   (write-value-32 $9E220000) ;scvtf s0 x0
+   (write-value-32 $1E21C000) ;fsqrt s0 s0
+   (write-value-32 $9E250000) ; fcvtau x0 s0
+
+   mov temp x0
+   add x0 dx2 dy2   ; sqrt dx2 + dy2
+
+   (write-value-32 $9E220000) ;scvtf s0 x0
+   (write-value-32 $1E21C000) ;fsqrt s0 s0
+   (write-value-32 $9E250000) ; fcvtau x0 s0
+
+   eor colour temp x0   ; xor sqrts 
+   lsr colour colour @4
+   mov temp @1
+   and colour colour temp
+   cbnz colour other+
+   mov colour @$FFFF
+   b store+
+:other
+   mov colour @$00FF
+:store   
+
    str colour (vptr @0)
    sub x x @1
    add vptr vptr @4
@@ -758,6 +834,19 @@ error_invalid_el0_32:
    add vptr vptr temp
 
    cbnz y y-loop-
+
+
+   mov temp @1
+   adr x0 finished-rendering:
+   str temp (w0 @0)
+
+
+   ldr temp pointAX:
+   adr x0 pointAX:
+   add temp temp @1
+   str temp (x0 @0)
+
+   b loop-
 })                        
 
 (subr handle-irq () [] {
@@ -769,6 +858,10 @@ error_invalid_el0_32:
   mov x1 @0
   str w1 (x0 @0)
 
+  ; only flip if render finished
+  ldr x0 finished-rendering:
+  cbz x0 quit:
+;  (debug-str "flip" #t)
   ldr x1 CURRENT-PAGE:
   cbnz x1 f+
   mov x3 @height
@@ -778,9 +871,15 @@ error_invalid_el0_32:
 :done
   adr x1 CURRENT-PAGE:
   str x3 (x1 @0)
+
   bl page-flip:
-  bl update-gfx:
-})
+  adr x1 finished-rendering:
+  mov x2 @0
+  str w2 (x1 @0)  
+  ;bl update-gfx:
+
+  
+:quit})
 
 
   ; the following values are used for loading 64 bit addresses/values via LDR(literal)
@@ -795,7 +894,7 @@ error_invalid_el0_32:
 ;:START (write-value-64 $400000)
 :CONVERT (write-value-64 $3FFFFFFF)
 :HCR-VALUE (write-value-64 HCR_VALUE)
-:SCTLR-VALUE-MMU-DISABLED (write-value-64 SCTLR_VALUE_MMU_DISABLED)
+:SCTLR-VALUE-MMU-DISABLED (write-value-64 SCTLR_VALUE_MMU_DISABLED2)
 :SCR-VALUE (write-value-64 SCR_VALUE)
 :SPSR-VALUE (write-value-64 SPSR_VALUE)
 :FAKE-ISR (write-value-64 $10000)
@@ -803,6 +902,13 @@ error_invalid_el0_32:
 :FRAME-SIZE (write-value-64 (* width height 4))
 :ROW-SIZE (write-value-64 (* width 4))
 :VMEM (write-value-64 0)
+:pointAX(write-value-64 10)
+:pointAY(write-value-64 10)
+:pointBX(write-value-64 100)
+:pointBY(write-value-64 100)
+:finished-rendering (write-value-64 0)
+
+
 
 ; to communicate with the video core gpu we need an address that
   ; is 16-byte algined - the lower 4 bits are not set. these are then
@@ -830,7 +936,7 @@ error_invalid_el0_32:
       (write-value-32 8) ; value buffer size
       (write-value-32 0) ; 0 = request
       (write-value-32 0) ; x
-      (write-value-32 384); y
+      (write-value-32 (/ height 2)); y
 
    ; set depth 
       (write-value-32 $48005)
