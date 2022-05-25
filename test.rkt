@@ -442,11 +442,9 @@
      sub x4 x4 @1
      cbnz x4 row-
 ; second page 
-;     mov x8 x0
-     mov x1 @$FF00
-;     lsl x1 x1 @32
-;     movk x1 @255
-;     lsl x1 x1 @8
+
+;     mov x1 @$FF00  ; comment this line to keep colour same (stop flashing page flip!)
+
 :draw
      mov x4 @height  ; rows
 :row     
@@ -755,7 +753,7 @@ error_invalid_el0_32:
                   [pBX x12]
                   [pBY x13]
                   [row-size x14]
-
+                  [fc x15]
                   ) [x0 x1 x2 x3 x4]
                     {
  ;   ldr row-size ROW-SIZE:
@@ -767,10 +765,33 @@ error_invalid_el0_32:
  mov vptr x0  
 
  
-   ldr pAX pointAX:
-   ldr pAY pointAY:
-   ldr pBX pointBX:
-   ldr pBY pointBY:
+   ldr fc frame-count:
+;   lsr fc fc @1
+   mov x0 @$3FFF
+   and fc fc x0
+   mov x0 @4
+   mul fc fc x0
+   
+   adr x0 cx1lookup:
+   add x0 x0 fc
+   ldr w10 (X0 @0)
+
+   adr x0 cy1lookup:
+   add x0 x0 fc
+   ldr w11 (X0 @0)
+
+   adr x0 cx2lookup:
+   add x0 x0 fc
+   ldr w12 (X0 @0)
+
+   adr x0 cy2lookup:
+   add x0 x0 fc
+   ldr w13 (X0 @0)
+
+   ;; ldr pAX pointAX:
+   ;; ldr pAY pointAY:
+   ;; ldr pBX pointBX:
+   ;; ldr pBY pointBY:
 
       
    mov y @(/ height 2)
@@ -818,10 +839,12 @@ mov x @(/ width 2)
    mov temp @1
    and colour colour temp
    cbnz colour other+
-   mov colour @$FFFF
+   mov colour @$00FF
+   lsl x3 x3  @16
+   movk colour @$FFFF
    b store+
 :other
-   mov colour @$00FF
+   mov colour @$0000
 :store   
 
    str colour (vptr @0)
@@ -840,11 +863,11 @@ mov x @(/ width 2)
    adr x0 finished-rendering:
    str temp (w0 @0)
 
-
-   ldr temp pointAX:
-   adr x0 pointAX:
+   ldr temp frame-count: ; frame-count++
    add temp temp @1
+   adr x0 frame-count:
    str temp (x0 @0)
+   
 
    b loop-
 })                        
@@ -907,7 +930,7 @@ mov x @(/ width 2)
 :pointBX(write-value-64 100)
 :pointBY(write-value-64 100)
 :finished-rendering (write-value-64 0)
-
+:frame-count (write-value-64 0)
 
 
 ; to communicate with the video core gpu we need an address that
@@ -982,7 +1005,39 @@ mov x @(/ width 2)
     (write-value-32 0) ;end tag
 
 
+/= 8
+:cx1lookup
+(for ([t (in-range 0 (* 1024 10))])
+  (let* ([delta (/ 3.14 2)]
+        [a (sin (+ delta (* 3 (/ t 100))))]
+        )
+    (write-value-32  (exact-round (+ (/ width 2 2) (* (/ width 2 2) a))))))
+:cy1lookup
+(for ([t (in-range 0 (* 1024 10))])
+  (let* ([delta (/ 3.14 2)]
+        [a (sin (+ delta (* 4 (/ t 100))))]
+        )
+    (write-value-32  (exact-round (+ (/ height 2 2) (* (/ height 2 2) a))))))
+
+:cx2lookup
+(for ([t (in-range 0 (* 1024 10))])
+  (let* ([delta 3.14;(/ 3.14 2)
+                ]
+        [a (sin (+ delta (* 3 (/ t 100))))]
+        )
+    (write-value-32  (exact-round (+ (/ width 2 2) (* (/ width 2 2) a))))))
+:cy2lookup
+(for ([t (in-range 0 (* 1024 10))])
+  (let* ([delta 3.14;(/ 3.14 2)
+                ]
+        [a (sin (+ delta (* 2 (/ t 100))))]
+        )
+    (write-value-32  (exact-round (+ (/ height 2 2) (* (/ height 2 2) a))))))
 
 
 })
+
+
+
+
 
