@@ -117,6 +117,22 @@
         ; shift left by 3, then splat the top 19 bits and lower 5 bits
         (let ([shifted (bitwise-and #x00FFFFE0 (arithmetic-shift imm19 3))])
           (bitwise-ior bin shifted))])     ]
+    ['hw-imm16-rd
+     (match-lambda
+       [(list bin rd)        
+        ;rd goes in the bottom 5 bits
+        (bitwise-ior-n rd bin)])
+     (match-lambda
+       [(list bin imm16 shift)
+        (when (>= imm16 (arithmetic-shift 1 16))
+          (error (format "error: immediate value ~x is larger than 16 bits" imm16)))
+        (when  (not (eq? (remainder shift 16) 0))
+          (error (format "error: shift value ~x is not a multiple of 16 " shift)))
+        ; shift up 5 bits, keep 16 bits
+          (let ([shifted (arithmetic-shift (bitwise-and #xFFFF imm16 ) 5) ]
+                [shifted2 (arithmetic-shift (quotient shift 16) 21)] )
+          (bitwise-ior-n bin shifted shifted2))])
+     ]
     ['imm16-rd
      (match-lambda
        [(list bin rd)        
@@ -124,8 +140,8 @@
         (bitwise-ior-n rd bin)])
      (match-lambda
        [(list bin imm16)
-        (when (> (bitwise-and #xFFFF0000 imm16) 0 )
-          (error (format "immediate value ~x is larger than 16 bits" imm16)))
+        (when (>= imm16 (arithmetic-shift 1 16))
+          (error (format "error: immediate value ~x is larger than 16 bits" imm16)))
         ; shift up 5 bits, keep 16 bits
         (let ([shifted (arithmetic-shift (bitwise-and #xFFFF imm16 ) 5) ])
           (bitwise-ior-n bin shifted))])
@@ -167,6 +183,8 @@
           (bitwise-ior-n rn-shifted rd bin))])
      (match-lambda
        [(list bin imm6)
+        (when (>= imm6 (arithmetic-shift 1 6))
+          (error (format "error: immediate value ~x is larger than 6 bits" imm6)))
         (let ([immr (arithmetic-shift imm6 16)])
           (bitwise-ior-n immr bin))])
      ]
@@ -178,6 +196,8 @@
           (bitwise-ior-n rn-shifted rd2-shifted rd bin))])
      (match-lambda
        [(list bin imm7)
+        (when (>= imm7 (arithmetic-shift 1 7))
+          (error (format "error: immediate value ~x is larger than 7 bits" imm7)))
         (let ([immr (arithmetic-shift imm7 15)])
           (bitwise-ior-n immr bin))])
      ]
@@ -189,6 +209,8 @@
           (bitwise-ior-n rn-shifted rd bin))])
      (match-lambda
        [(list bin imm9)
+        (when (>= imm9 (arithmetic-shift 1 9))
+          (error (format "error: immediate value ~x is larger than 9 bits" imm9)))
         (let ([imm (arithmetic-shift (bitwise-and #b111111111 imm9) 12)])
           (bitwise-ior-n imm bin))])
      ]
@@ -200,6 +222,8 @@
           (bitwise-ior-n rn-shifted rt bin))])
      (match-lambda
        [(list bin imm12)
+        (when (>= imm12 (arithmetic-shift 1 12))
+          (error (format "error: immediate value ~x is larger than 12 bits" imm12)))
         (let ([imm (arithmetic-shift (bitwise-and #b111111111111 imm12) 10)])
           (bitwise-ior-n imm bin))])
      ]
@@ -210,6 +234,8 @@
           (bitwise-ior-n rn-shifted rt bin))])
      (match-lambda
        [(list bin imm9)
+        (when (>= imm9 (arithmetic-shift 1 9))
+          (error (format "error: immediate value ~x is larger than 9 bits" imm9)))
         (let ([imm-shifted (arithmetic-shift (bitwise-and #b111111111 imm9) 12)])
           (bitwise-ior-n imm-shifted bin))])
      ]
@@ -368,8 +394,11 @@
     ['mov 'reg-reg       'rm-rd                              #b10101010000000000000001111100000 b31 #f]
     ; todo: not sure N here works always set to one with 32 bhit as well?
     ['mov 'reg-imm       'imm16-rd                           #b11010010100000000000000000000000 b31 #f]
+    ['movz 'reg-imm      'imm16-rd                           #b11010010100000000000000000000000 b31 #f]
+    ['movz 'reg-imm-shift 'hw-imm16-rd                       #b11010010100000000000000000000000 b31 #f]
     ['movk 'reg-imm      'imm16-rd                           #b11110010100000000000000000000000 b31 #f]
-    ['mul  'reg-reg-reg  'rm-rn-rd                           #b10011011000000000111110000000000 b31 #f]
+    ['movk 'reg-imm-shift 'hw-imm16-rd                       #b11110010100000000000000000000000 b31 #f]
+    ['mul 'reg-reg-reg   'rm-rn-rd                           #b10011011000000000111110000000000 b31 #f]
     ['mrs 'reg-sysreg    'rt-sysreg                          #b11010101001100000000000000000000 #f #f]
     ['msr 'sysreg-reg    'sysreg-rt                          #b11010101000100000000000000000000 #f #f]
     ['msr 'sysreg-imm4   'sysreg-imm4                        #b11010101000000000000000000011111 #f #f]
@@ -559,7 +588,11 @@
         [final-address-encoder
          (match-lambda
            [(list bin) bin]
-           [(list bin imm) (address-encoder (list bin (imm-mod imm is-32bit?)))])]
+           [(list bin imm) (address-encoder (list bin (imm-mod imm is-32bit?)))]
+           ; here we can have a shift value, this is never part of the calcuated address
+           ; this is a bit leaky though, need to revist this stuff now I understand how it
+           ; works better. do we need a shift mod here as well?
+           [(list bin imm shift) (address-encoder (list bin (imm-mod imm is-32bit?) shift))])]
         [with-data (data-encoder (cons raw data-args))]
         [with-addr (final-address-encoder (cons with-data immediate-address-args))]
 
@@ -607,7 +640,7 @@
              #:do [(define sym (syntax-e (attribute x)))
                    (define ocs
                      (list 'add 'adr 'and 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
-                           'bl 'cbz 'cbnz 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'mrs 'msr 'mul 'neg 'orr 'ret
+                           'bl 'cbz 'cbnz 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'orr 'ret
                            'stp 'str 'strb 'strh 'stur 'sub 'wfe))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
@@ -638,7 +671,7 @@
              #:when (not (syntax-e #'x.is32)))))
 (define-syntax (arm-line stx)
 ;  (writeln stx)
-  (syntax-parse stx #:datum-literals (= !)
+  (syntax-parse stx #:datum-literals (= ! LSL)
    ; nop
    [(_ (~optional label:label) oc:opcode)
     #'(begin
@@ -674,6 +707,11 @@
      #'(begin
          (~? (try-set-jump-source `label set-jump-source-current))
          (write-instruction 'oc 'sysreg-reg #f (list `sr.regnum `rt.regnum) '() #f))]
+   ; mov x0 @1 LSL @16
+   [(_ (~optional label:label) oc:opcode rt:register #:immediate n LSL #:immediate shift)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-imm-shift `rt.is32 (list `rt.regnum) (list n shift) #f))]
    ; mov x0 @1
    [(_ (~optional label:label) oc:opcode rt:register #:immediate n)
     #'(begin
@@ -856,3 +894,7 @@
   
 (provide (all-defined-out))
 (provide (for-syntax immediate system-register opcode register register-32 register-64 label label-targ))
+
+
+;#xFFFF0000
+
