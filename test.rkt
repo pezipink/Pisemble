@@ -224,6 +224,9 @@
      ;Mailbox channels
      mbox-ch-prop = $8  ; request to VC from ARM
 
+     ; raspberry pi image size
+     image-width = 190
+     image-height = 240
 
      mrs x0 mpidr_el1
      mov x1 @$3
@@ -343,61 +346,6 @@
      (debug-reg x0)
      adr x8 MBOX-MSG:
      bl send-vcore-msg:
-; MSG START     
-;;      ldr x0 VC_MBOX: 
-;; :wait      
-;;      ldr w1 (x0 @mbox-status)
-;;      (debug-str "STATUS" #t)
-;;      (debug-reg x0)
-
-
-;;      ; and with 0x8000_0000
-;;      mov x2 @1
-;;      lsl x2 x2 @31
-;;      and x1 x1 x2
-;;      cbnz x1 wait-
-;;      (debug-str "RTS" #t)
-;;      ; attempt to call the mailbox interface
-;;      ; upper 28 bits are the address of the message
-;;      adr x2 MBOX-MSG:
-;;      mov x0 x2
-;; ;     (debug-w0)
-;;      ldr x0 VC_MBOX: 
-;;      ; lower four bits specify the mailbox channel,
-;;      ; in this case mbox-ch-prop (8)
-;;      mov x3 @mbox-ch-prop
-;;      orr x2 x2 x3 ; we dont support orr reg-reg-imm yet
-;;      ;now we wait until the FULL flag is not set so we can
-;;      ; send our message
-;; ;     (debug-reg w0)
-;; ;     (debug-reg w2)
-
-;;      str w2 (x0 @mbox-write)
-
-;; ;     (debug-str "WFR" #t)
-;;      ; now wait for a response 
-;; :wait      
-;;     ldr w1 (x0 @mbox-status)
-;; ;    (debug-str "STATUS")
-;; ;    (debug-reg x1)
-;;      ; and with 0x4000_0000
-;;      mov x2 @1
-;;      lsl x2 x2 @30
-;;      and x1 x1 x2
-;;      cbnz x1 wait-
-;; ;     (debug-str "DONE")
-;;      ; check if mbox-read = channel
-
-
-;;      ldr w1 (x0 @mbox-read)
-;;      (debug-reg x1)
-;;      mov x2 @%1111
-;;      and x1 x1 x2
-;;      sub x1 x1 @mbox-ch-prop
-;;      cbnz x1 wait-
-
-;MSG FINISH
-     
      (debug-str "bpl" #t)
 
      adr x0 bpl:
@@ -443,8 +391,10 @@
      cbnz x4 row-
 ; second page 
 
-;     mov x1 @$FF00  ; comment this line to keep colour same (stop flashing page flip!)
-
+     ;     mov x1 @$FF00  ; comment this line to keep colour same (stop flashing page flip!)
+    mov x1 @$FF00
+    lsl x1 x1 @16
+    
 :draw
      mov x4 @height  ; rows
 :row     
@@ -738,7 +688,9 @@ error_invalid_el0_32:
     mov x0 x1
 })
 
-(subr update-gfx (
+
+; renders moire pattern
+(subr update-gfx-moire (
                   [x x1]
                   [y x2]
                   [colour w3]
@@ -792,7 +744,6 @@ error_invalid_el0_32:
    ;; ldr pAY pointAY:
    ;; ldr pBX pointBX:
    ;; ldr pBY pointBY:
-
       
    mov y @(/ height 2)
 ;   mov colour @$FFFF
@@ -839,7 +790,7 @@ mov x @(/ width 2)
    mov temp @1
    and colour colour temp
    cbnz colour other+
-   mov colour @$00FF
+   mov colour @$ffFF
    lsl x3 x3  @16
    movk colour @$FFFF
    b store+
@@ -870,7 +821,91 @@ mov x @(/ width 2)
    
 
    b loop-
-})                        
+   })
+
+; renders rapsberry pi image
+(subr update-gfx (
+                  [x x1] ; current x
+                  [y x2] ; current y
+                  [vptr x3]
+                  [iptr x4]
+                  [temp x5]
+                  [h x6] ; image height
+                  [w x7] ; image width
+
+                  [word w8] ; copied word
+                  [xpos x9] ; positive x and y counters for 
+                  [ypos x10] ; wrapping image
+                  [width-bytes x11]
+
+                  ) []
+                    {
+ mov temp @image-width
+ mov w @4                         
+ mul width-bytes temp w
+
+:loop
+ ldr x0 finished-rendering:
+ cbnz x0 loop-
+ bl get-back-buffer:
+ mov vptr x0    
+ adr iptr rpi-image:  ; iptr at start of image
+ mov y @(/ height 2) ; x and y count down
+ mov xpos @0  ; image positions
+ mov ypos @0
+:y-loop
+ mov x @(/ width 2)
+ 
+ 
+:x-loop
+   ldr word (iptr @0) ; load next pixel from image
+   str word (vptr @0) ; store 
+   ;increase video memory pointer
+   sub x x @1
+   add vptr vptr @4
+   ;incresae image x counter
+   add xpos xpos @1
+   ;if we are over the width, move image pointer back width bytes
+   mov temp @image-width
+   cmp xpos temp
+   b.ne skip+
+   mov xpos @0
+   sub iptr iptr width-bytes
+   b done+
+:skip
+   ; else move to next image pixel
+   add iptr iptr @4
+:done   
+   cbnz x x-loop-
+   ; end x loop
+
+ ;end of row. reset x position
+ ;we might be part way through so we have to calculate this
+ mov temp @4
+ mul temp xpos temp
+ sub iptr iptr temp
+ mov xpos @0
+ ;now deal with Y
+ ;first video memory 
+ sub y y @1
+ sub vptr vptr @(* (/ width 2) 4)
+ ldr temp ROW-SIZE:
+ add vptr vptr temp
+ ;now move to next row of image
+ add iptr iptr width-bytes
+ add iptr iptr @4
+ cbnz y y-loop-
+ ; end y loop
+
+
+;signal render has finished
+mov temp @1
+adr x0 finished-rendering:
+str temp (w0 @0)
+
+; loop infinite
+b loop-
+})
 
 (subr handle-irq () [] {
 ;(debug-str "handled interrupt" #t)
@@ -1009,7 +1044,7 @@ mov x @(/ width 2)
 :cx1lookup
 (for ([t (in-range 0 (* 1024 10))])
   (let* ([delta (/ 3.14 2)]
-        [a (sin (+ delta (* 3 (/ t 100))))]
+        [a (sin (+ delta (* 5 (/ t 100))))]
         )
     (write-value-32  (exact-round (+ (/ width 2 2) (* (/ width 2 2) a))))))
 :cy1lookup
@@ -1034,6 +1069,10 @@ mov x @(/ width 2)
         )
     (write-value-32  (exact-round (+ (/ height 2 2) (* (/ height 2 2) a))))))
 
+
+/= 8
+:rpi-image (write-values (bytes->list (file->bytes "rpi.bin")))
+;:rpi-image (write-values 0)
 
 })
 
