@@ -1,9 +1,7 @@
-
 #lang pisemble
 (require (for-syntax syntax/parse racket/stxparam))
 (require racket/stxparam)
 (require "periph.rkt" "stack.rkt")
-(set-emulator-program! emu "kernel8.img")
 
 (define s-frame-size 256) ; size of all saved registers
 (define SYNC_INVALID_EL1t 0)
@@ -194,7 +192,7 @@
 
 (define VCORE-MBOX (+ PERIPH-BASE $00B880))
 
-(aarch64 {
+(aarch64 "kernel8.img" [] {
      width = 1024
      height = 768      
      set-offset = $1C
@@ -243,9 +241,8 @@
 
      :main
 
-     ;; mov     x0, #3 << 20
-;;     msr     cpacr_el1, x0	 // Enable FP/SIMD at EL1
-   (write-value-32 $d2a00600)
+   ;;     msr     cpacr_el1, x0	 // Enable FP/SIMD at EL1
+   movz x0 @$30 LSL @16 ; 3 << 20
    (write-value-32 $d5181040)
      
     ; get ready to switch from EL3 down to EL1
@@ -447,7 +444,7 @@
    (write-value-32 $1E21C000) ;fsqrt s0 s0
    (write-value-32 $9E250000) ; fcvtau x0 s0
      
-     bl update-gfx:
+     bl update-gfx-moire:
  :loop
      b loop-
 
@@ -691,26 +688,26 @@ error_invalid_el0_32:
 
 ; renders moire pattern
 (subr update-gfx-moire (
-                  [x x1]
+                  [x x1]  ; current x and y pixels
                   [y x2]
                   [colour w3]
-                  [temp x4]
-                  [dx x5]
+                  [temp x4] ; temporary / intermediates
+                  [dx x5]  
                   [dy x6]
                   [dx2 x7]
                   [dy2 x8]
-                  [vptr x9]
-                  [pAX x10]
+                  [vptr x9] ; video memory pointer
+                  [pAX x10] ; point a and b co-ords
                   [pAY x11]
                   [pBX x12]
                   [pBY x13]
                   [row-size x14]
-                  [fc x15]
+                  [fc x15] ; frame-count
                   ) [x0 x1 x2 x3 x4]
                     {
  ;   ldr row-size ROW-SIZE:
 :loop
- ldr x0 finished-rendering:
+ ldr w0 finished-rendering:
  cbnz x0 loop-
 ; (debug-str "render" #t)
  bl get-back-buffer:
@@ -746,9 +743,192 @@ error_invalid_el0_32:
    ;; ldr pBY pointBY:
       
    mov y @(/ height 2)
+   
 ;   mov colour @$FFFF
 :y-loop
-mov x @(/ width 2)
+  mov x @(/ width 2)
+  
+  ; calculate distance of this pixel to point a and b
+   mov dy y
+   mov temp pAY
+   sub dy dy temp
+   mul dy dy dy
+
+   mov dy2 y
+   mov temp pBY
+   sub dy2 dy2 temp
+   mul dy2 dy2 dy2
+
+
+:x-loop
+   mov dx x
+   mov temp pAX
+   sub dx dx temp
+   mul dx dx dx
+
+   mov dx2 x
+   mov temp pBX
+   sub dx2 dx2 temp
+   mul dx2 dx2 dx2
+
+   add x0 dx dy   ; sqrt dx + dy
+
+   ;; (write-value-32 $9E220000) ;scvtf s0 x0
+   ;; (write-value-32 $1E21C000) ;fsqrt s0 s0
+   ;; (write-value-32 $9E250000) ; fcvtau x0 s0
+
+   mov temp x0
+   add x0 dx2 dy2   ; sqrt dx2 + dy2
+
+   ;; (write-value-32 $9E220000) ;scvtf s0 x0
+   ;; (write-value-32 $1E21C000) ;fsqrt s0 s0
+   ;; (write-value-32 $9E250000) ; fcvtau x0 s0
+
+   eor colour temp x0   ; xor sqrts 
+   lsr colour colour @1
+   mov temp @1
+   and colour colour temp
+   cbnz colour other+
+   mov colour @$ffFF
+   lsl x3 x3  @16
+   movk colour @$FFFF
+   b store+
+:other
+   mov colour @$0000
+:store   
+
+   str colour (vptr @0)
+   sub x x @1
+   add vptr vptr @4
+   cbnz x x-loop-
+   sub y y @1
+   sub vptr vptr @(* (/ width 2) 4)
+   ldr temp ROW-SIZE:
+   add vptr vptr temp
+
+   cbnz y y-loop-
+
+
+   mov temp @1
+   adr x0 finished-rendering:
+   str temp (w0 @0)
+
+   ldr temp frame-count: ; frame-count++
+   add temp temp @1
+   adr x0 frame-count:
+   str temp (x0 @0)
+   
+
+   b loop-
+   })
+
+(subr update-gfx-moire-simd (
+                  [x x1]
+                  [y x2]
+                  [colour w3]
+                  [temp x4]
+                  [dx x5]
+                  [dy x6]
+                  [dx2 x7]
+                  [dy2 x8]
+                  [vptr x9]
+                  [pAX x10]
+                  [pAY x11]
+                  [pBX x12]
+                  [pBY x13]
+                  [row-size x14]
+                  [fc x15]
+                  ) [x0 x1 x2 x3 x4]
+                    {
+
+; for the full-screen moire simd we need to
+; do as many computations at once as possible
+; eg calcuate many pixels at once. the upper bounds
+; of possible values will affect how many lanes we can                      
+; use in the registers
+:temp
+; the basic algorithm is as such 
+; for each pixel;
+;   calculate the distance to the two circles 
+;      dy = (square (y - cy))
+;      dx = (square (x - cx))
+;      dy2 = (square (y - cy2))
+;      dx2 = (square (x - cx2))
+;      srt1 = (sqrt (dx + dy))
+;      srt2 = (sqrt (dx2 + dy2))
+;  then we xor together and shift the result by n bits
+;      (srt1 ^ srt2) >> 4
+;  and finally select colour based on bit 0
+
+; the maximum value of the squares will be 1024 * 1024 = $100000 or 21 bits (24 bits)
+; we can most easily fit 4 of these values into the 128 bit vector reg.
+; this actually works out quite nicely since we have 4 values to calculate;
+;   -  load v1 with 2x copies of y and 2x copies of x (FP)
+;   -  load v2 with cy and cy2,  cx and  cx2
+;   -  v1 = v1 - v2  (minus)   FSUB
+;   -  replicate v1 into v2
+;   -  v1 = v1 * v2  (square)  FMUL
+;   - now we need to add v1 using v1.0 + v1.1 (faddp, we don't care about the second vector)
+;     so, addp v1 v1 v1
+;   this results in a vector v1 of  [(dx+dy);(dx2+dy2);(dx+dy);(dx2+dy2)]
+;  now we can sqrt them
+;    fsqrt v1 v1
+;  convert to unsigned ints
+;    FCVTPU v1.2s v1.2s
+;  we don't want to xor since we have 2 we aren't interested in
+;  at this point we can get them back itno non-fp land
+;  mov 64 bits out which is our two values
+;    fmov x0 d0
+;  replicate and shift
+;   mov x1 x0
+;   lsl x1 @32
+;  xor them
+;   eors w0 w1
+;  now csel out the coluor
+
+                     ;   ldr row-size ROW-SIZE:
+:loop
+ ldr w0 finished-rendering:
+ cbnz x0 loop-
+; (debug-str "render" #t)
+ bl get-back-buffer:
+ mov vptr x0  
+
+ 
+   ldr fc frame-count:
+;   lsr fc fc @1
+   mov x0 @$3FFF
+   and fc fc x0
+   mov x0 @4
+   mul fc fc x0
+   
+   adr x0 cx1lookup:
+   add x0 x0 fc
+   ldr w10 (X0 @0)
+
+   adr x0 cy1lookup:
+   add x0 x0 fc
+   ldr w11 (X0 @0)
+
+   adr x0 cx2lookup:
+   add x0 x0 fc
+   ldr w12 (X0 @0)
+
+   adr x0 cy2lookup:
+   add x0 x0 fc
+   ldr w13 (X0 @0)
+
+   ;; ldr pAX pointAX:
+   ;; ldr pAY pointAY:
+   ;; ldr pBX pointBX:
+   ;; ldr pBY pointBY:
+      
+   ;mov y @(/ height 2)
+   mov y @height
+;   mov colour @$FFFF
+:y-loop
+;mov x @(/ width 2)
+   mov x @width
   ; calculate distance of this pixel to point a and b
    mov dy y
    mov temp pAY
@@ -803,7 +983,9 @@ mov x @(/ width 2)
    add vptr vptr @4
    cbnz x x-loop-
    sub y y @1
-   sub vptr vptr @(* (/ width 2) 4)
+   ;sub vptr vptr @(* (/ width 2) 4)
+     mov temp @(* width 4)
+     sub vptr vptr temp
    ldr temp ROW-SIZE:
    add vptr vptr temp
 
@@ -845,7 +1027,7 @@ mov x @(/ width 2)
  mul width-bytes temp w
 
 :loop
- ldr x0 finished-rendering:
+ ldr w0 finished-rendering:
  cbnz x0 loop-
  bl get-back-buffer:
  mov vptr x0    
@@ -917,8 +1099,8 @@ b loop-
   str w1 (x0 @0)
 
   ; only flip if render finished
-  ldr x0 finished-rendering:
-  cbz x0 quit:
+  ldr w0 finished-rendering:
+  cbz w0 quit:
 ;  (debug-str "flip" #t)
   ldr x1 CURRENT-PAGE:
   cbnz x1 f+
@@ -929,12 +1111,12 @@ b loop-
 :done
   adr x1 CURRENT-PAGE:
   str x3 (x1 @0)
-
+  
   bl page-flip:
+  ;bl update-gfx:
   adr x1 finished-rendering:
   mov x2 @0
   str w2 (x1 @0)  
-  ;bl update-gfx:
 
   
 :quit})
@@ -959,6 +1141,7 @@ b loop-
 :CURRENT-PAGE (write-value-64 0)
 :FRAME-SIZE (write-value-64 (* width height 4))
 :ROW-SIZE (write-value-64 (* width 4))
+
 :VMEM (write-value-64 0)
 :pointAX(write-value-64 10)
 :pointAY(write-value-64 10)

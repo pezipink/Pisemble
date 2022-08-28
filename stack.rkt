@@ -1,10 +1,12 @@
 #lang pisemble
 (require (for-syntax syntax/parse))
+
 (define-syntax (regs stx)
   (syntax-parse stx
     [(_ ([new-reg old-reg:register]...) expr ...)
      #'(let-syntax ([new-reg (make-rename-transformer #'old-reg)] ...)
          expr ...)]))
+
 (define-syntax (PUSH-REG-INNER stx)
   (writeln stx)
   (syntax-parse stx

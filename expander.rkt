@@ -11,6 +11,8 @@
                      racket/list))
 
 (require syntax/parse/define)
+
+(require "objfile.rkt")
 (define is-debug #f)
 
 (define-syntax (wdb stx)  
@@ -119,19 +121,19 @@
           (bitwise-ior bin shifted))])     ]
     ['hw-imm16-rd
      (match-lambda
-       [(list bin rd)        
-        ;rd goes in the bottom 5 bits
-        (bitwise-ior-n rd bin)])
-     (match-lambda
-       [(list bin imm16 shift)
-        (when (>= imm16 (arithmetic-shift 1 16))
-          (error (format "error: immediate value ~x is larger than 16 bits" imm16)))
+       [(list bin rd shift)
         (when  (not (eq? (remainder shift 16) 0))
           (error (format "error: shift value ~x is not a multiple of 16 " shift)))
-        ; shift up 5 bits, keep 16 bits
-          (let ([shifted (arithmetic-shift (bitwise-and #xFFFF imm16 ) 5) ]
-                [shifted2 (arithmetic-shift (quotient shift 16) 21)] )
-          (bitwise-ior-n bin shifted shifted2))])
+        (let ([shifted (arithmetic-shift (quotient shift 16) 21)])          
+          ;rd goes in the bottom 5 bits
+          (bitwise-ior-n rd bin shifted))])
+     (match-lambda
+       [(list bin imm16)
+        (when (>= imm16 (arithmetic-shift 1 16))
+          (error (format "error: immediate value ~x is larger than 16 bits" imm16)))
+          ; shift up 5 bits, keep 16 bits
+          (let ([shifted (arithmetic-shift (bitwise-and #xFFFF imm16) 5)])
+          (bitwise-ior-n bin shifted))])
      ]
     ['imm16-rd
      (match-lambda
@@ -268,6 +270,16 @@
      (match-lambda
        [(list bin) bin])
      ]
+    ['rm-cond-rn-rd
+     (match-lambda
+       [(list bin rd rn rm con)
+        (let ([rn-shifted (arithmetic-shift rn 5)]
+              [rm-shifted (arithmetic-shift rm 16)]
+              [cond-shifted (arithmetic-shift con 12)])
+          (bitwise-ior-n rd rn-shifted rm-shifted cond-shifted bin))])
+     (match-lambda
+       [(list bin) bin])
+     ]
     ['rm-rn-rd
      (match-lambda
        [(list bin rd rn rm)
@@ -371,15 +383,16 @@
     ['cbz 'reg-lbl       'imm19-rt                           #b10110100000000000000000000000000 b31 #f]
     ['cbnz 'reg-lbl      'imm19-rt                           #b10110101000000000000000000000000 b31 #f]
     ['cmp  'reg-reg      'rm-rn                              #b11101011000000000000000000011111 b31 #f]
+    ['csel 'reg-reg-reg-cond 'rm-cond-rn-rd                  #b10011010100000000000000000000000 b31 #f]
     ['eor 'reg-reg-reg   'rm-rn-rd                           #b11001010000000000000000000000000 b31 #f]
     ['eret 'none         'none                               #b11010110100111110000001111100000 #f #f] 
 
-    ['ldp 'reg-reg_reg-imm_ 'imm7-rd2-rn-rd                 #b10101001010000000000000000000000 b31 shift-2-or-3]
+    ['ldp 'reg-reg_reg-imm_ 'imm7-rd2-rn-rd                  #b10101001010000000000000000000000 b31 shift-2-or-3]
     ['ldr 'reg_reg_imm  'imm9-rn-rd                          #b11111000010000000000010000000000 b30 #f]
     ['ldr 'reg_reg-imm_excla  'imm9-rn-rd                    #b11111000010000000000110000000000 b30 #f]
 
     ['ldr 'reg-lbl       'imm19-rt                           #b01011000000000000000000000000000 b30 #f]
-    ['ldr  'reg_reg-imm_ 'imm12-rn-rd                       #b11111001010000000000000000000000 b30 shift-2-or-3]
+    ['ldr  'reg_reg-imm_ 'imm12-rn-rd                        #b11111001010000000000000000000000 b30 shift-2-or-3]
     ['ldrh 'reg_reg_imm  'imm9-rn-rd                         #b01111000010000000000010000000000 #f #f]
     ['ldrh 'reg_reg-imm_excla  'imm9-rn-rd                   #b01111000010000000000110000000000 #f #f]
     
@@ -431,16 +444,8 @@
     ['wfe 'none          'none                               #b11010101000000110010000001011111 #f #f]))))
 
 (struct context (data location minl maxl jump-table branches-waiting breakpoints) #:mutable #:transparent)
-(struct emulator (path program breakpoints? labels? execute?) #:mutable #:transparent)
 (struct target-label (immediate-encoder relative location) #:transparent)
 (define prog (context (make-vector 65536000 0) 0 0 0 (make-hash) (make-hash) (mutable-set)))
-(define emu (emulator "" "" true true false))
-
-(define (configure-emu emu-path program-path execute-emu? enable-breakpoints?)
-  (set-emulator-program! emu program-path)
-  (set-emulator-execute?! emu execute-emu?)
-  (set-emulator-breakpoints?! emu enable-breakpoints?)
-  (set-emulator-path! emu emu-path))
 
 (define (update-min v)
   (cond [(< v (context-minl prog)) (set-context-minl! prog v)]))
@@ -459,7 +464,36 @@
 (define (inc-location)
   (set-location (+ 1 (context-location prog))))
 
+(define (is-global-label? key)
+  (char-upper-case? (string-ref key 1)))
+
+(define current-obj (create-blank-obj-file))
+    
+(define (set-current-obj new-obj)
+  (set-obj-file-string-table! current-obj (obj-file-string-table new-obj))
+  (set-obj-file-reverse-string-table! current-obj (obj-file-reverse-string-table new-obj))
+  (set-obj-file-object-composition! current-obj (obj-file-object-composition new-obj))
+  (set-obj-file-symbol-table! current-obj (obj-file-symbol-table new-obj))
+  (set-obj-file-target-table! current-obj (obj-file-target-table new-obj))
+  (set-obj-file-data! current-obj (obj-file-data new-obj)))
+
+
 (define (set-jump-source label location)
+  (when (is-global-label? label)
+    (if (hash-has-key? (obj-file-reverse-string-table current-obj) label)
+        (error (format "could not create the global label ~A since it already exists in a linked object" label))
+        (set-current-obj 
+         (match-let*
+             ([obj current-obj]
+              [(cons index obj) (add-or-get-string obj label)]
+              )
+           (begin
+              (set-obj-file-symbol-table!
+               obj
+               (cons (cons index location) (obj-file-symbol-table obj)))
+              obj)
+           ))))
+
   (let* ([h (context-jump-table prog)]
          [v (hash-ref! h label '())])
     (hash-set! h label (cons location v))))
@@ -588,11 +622,7 @@
         [final-address-encoder
          (match-lambda
            [(list bin) bin]
-           [(list bin imm) (address-encoder (list bin (imm-mod imm is-32bit?)))]
-           ; here we can have a shift value, this is never part of the calcuated address
-           ; this is a bit leaky though, need to revist this stuff now I understand how it
-           ; works better. do we need a shift mod here as well?
-           [(list bin imm shift) (address-encoder (list bin (imm-mod imm is-32bit?) shift))])]
+           [(list bin imm) (address-encoder (list bin (imm-mod imm is-32bit?)))])]
         [with-data (data-encoder (cons raw data-args))]
         [with-addr (final-address-encoder (cons with-data immediate-address-args))]
 
@@ -634,14 +664,33 @@
     (pattern daifset #:with regnum #x1a06)
     (pattern daifclr #:with regnum #x1a07))
 
+  (define-syntax-class condition
+    #:description "condition"
+    #:datum-literals (eq ne cs cc mi pl vs vc hi ls ge lt gt le al)
+    (pattern eq #:with condnum #b0000) ; equal Z = 1
+    (pattern ne #:with condnum #b0001) ; not equal, Z = 0
+    (pattern cs #:with condnum #b0010) ; Carry set, C = 1
+    (pattern cc #:with condnum #b0011) ; Carry clear, C = 0    
+    (pattern mi #:with condnum #b0100) ; Minus, neg ; N = 1
+    (pattern pl #:with condnum #b0101) ; Positive or zero ; N = 0
+    (pattern vs #:with condnum #b0110) ; Overflow  ; V = 1
+    (pattern vc #:with condnum #b0111) ; No overfolow, V = 0
+    (pattern hi #:with condnum #b1000) ; Unsigned higher, C = 1 && z = 0
+    (pattern ls #:with condnum #b1001) ; Unsigned lower or same !(C=1&&z=0)
+    (pattern ge #:with condnum #b1010) ; Signed greater eq, N = V
+    (pattern lt #:with condnum #b1011) ; Signed le, N! = V   
+    (pattern gt #:with condnum #b1100) ; Signed gt, Z = 0 && N = V
+    (pattern le #:with condnum #b1101) ; Signed le or eq, !(Z=0 & N=V
+    (pattern al #:with condnum #b1110) ; Always
+)
   (define-syntax-class opcode
     #:description "opcode"
     (pattern x:id
              #:do [(define sym (syntax-e (attribute x)))
                    (define ocs
                      (list 'add 'adr 'and 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
-                           'bl 'cbz 'cbnz 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'orr 'ret
-                           'stp 'str 'strb 'strh 'stur 'sub 'wfe))]
+                           'bl 'cbz 'cbnz 'csel 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'orr 'ret
+                           'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'wfe))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
     #:description "register"
@@ -663,6 +712,30 @@
              #:when (or isSp (and (or isX isW) (and (<= num 31)(>= num 0))))
              #:with regnum num
              #:with is32 isW))
+    ;; (define-syntax-class fpu-register
+    ;; #:description "fpu-register"
+    ;; (pattern x:id
+      
+    ;;          #:do [; here we expand the identifier so this class works with
+    ;;                ; rename-transformer allowing the user to rename registers
+    ;;                (define actual (local-expand #'x 'expression #f))
+    ;;                (define str (symbol->string (syntax-e  actual)))
+    ;;                (define isB (or (eq? (string-ref str 0) #\B)
+    ;;                                (eq? (string-ref str 0) #\b)))
+    ;;                (define isH (or (eq? (string-ref str 0) #\H)
+    ;;                                (eq? (string-ref str 0) #\h)))
+    ;;                (define isS (or (eq? (string-ref str 0) #\S)
+    ;;                                (eq? (string-ref str 0) #\s)))
+    ;;                (define isD (or (eq? (string-ref str 0) #\D)
+    ;;                                (eq? (string-ref str 0) #\d)))
+    ;;                (define num
+    ;;                  (string->number (substring str 1)))
+
+    ;;                ]
+    ;;          #:when  (and (or isB isH isS isD) (and (<= num 31)(>= num 0)))
+    ;;          #:with regnum num
+             
+    ;;          #:with is32 (or isB isH isS)))
   (define-syntax-class register-32
     (pattern x:register
              #:when (syntax-e #'x.is32)))
@@ -711,7 +784,7 @@
    [(_ (~optional label:label) oc:opcode rt:register #:immediate n LSL #:immediate shift)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'oc 'reg-imm-shift `rt.is32 (list `rt.regnum) (list n shift) #f))]
+        (write-instruction 'oc 'reg-imm-shift `rt.is32 (list `rt.regnum shift) (list n) #f))]
    ; mov x0 @1
    [(_ (~optional label:label) oc:opcode rt:register #:immediate n)
     #'(begin
@@ -760,26 +833,36 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-reg-reg `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum) '() #f))]
+   ; csel x0 x1 x2 gt
+   [(_ (~optional label:label) oc:opcode rt:register rn:register rm:register cond:condition)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-reg-reg-cond `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum `cond.condnum) '() #f))]
+   ; scvtf s0 x0
+   ;; [(_ (~optional label:label) oc:opcode rd:fpu-register rn:register)
+   ;;  #'(begin
+   ;;      (~? (try-set-jump-source `label set-jump-source-current))
+   ;;      (write-instruction 'oc 'reg-reg `rd.is32 (list `rd.regnum `rd.ftype `rn.regnum) '() #f))]
    ; eret
    [(_ (~optional label:label) oc:opcode)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'none #f (list ) '() #f))]
    
-    [(_ label:label)
+   [(_ label:label)
      #'(try-set-jump-source `label set-jump-source-current)]
-    [(_ label:label e:expr)
+   [(_ label:label e:expr)
      #'(begin (try-set-jump-source `label set-jump-source-current) e) ]
-    [(_ (~optional label:label) (~literal /=) t:nat )
+   [(_ (~optional label:label) (~literal /=) t:nat )
      #'(begin
          (~? (try-set-jump-source `label set-jump-source-current))
          (align t))]
 
-    [(_ v:identifier = e:expr)
+   [(_ v:identifier = e:expr)
      #'(define v e)]
 
-    [(_ e:expr ... ) #'(begin e ...) ]
-    [(_ e ) #'e] ))
+   [(_ e:expr ... ) #'(begin e ...) ]
+   [(_ e ) #'e] ))
 
 (define-syntax (arm-block stx)
   (syntax-parse stx
@@ -814,83 +897,227 @@
     ;;     (aux labels))
     ))
 
+(define (reset-prog)
+  (set-context-data! prog (make-vector 65536000 0))
+  (set-context-location! prog 0)
+  (set-context-minl! prog 0)
+  (set-context-maxl! prog 0)
+  (set-context-jump-table! prog (make-hash))
+  (set-context-branches-waiting! prog (make-hash))
+  )
 (define-syntax (aarch64 stx)
   (syntax-parse stx
-    [(_ a ...)
+    [(_ filename:string [linkfiles:string ...] a ...)
+     #:with link-list #'(list linkfiles ...)
      #'(begin
+         (reset-prog)
+         (define is-image? (string-suffix? filename ".img"))
+         
+         (set-current-obj
+          ; add the current file name as an object
+          (match-let*
+              ([obj (create-blank-obj-file)]
+               [(cons index obj) (add-or-get-string obj filename)])
+            (begin
+              (set-obj-file-object-composition!
+               obj
+               (cons index (obj-file-object-composition obj)))
+              obj)))
+
          (displayln "begin")
          a ...
          (displayln "DONE")
          (hash-for-each
           (context-branches-waiting prog)
           (λ (k dest)
-            (for [(current-target dest)]
-              (let*
-                  ; find the label
-                  ([actual  
-                    (find-closest-label
-                      k
-                      (target-label-location current-target)
-                      (target-label-relative current-target))]
-                   ; calculate offset in bytes
-                   [amount (- actual (target-label-location current-target))]
-                   [encoder (target-label-immediate-encoder current-target)])
-                
-                ;; (when (or (> amount 127) (< amount -127))
-                ;;   (writeln
-                ;;    (format "warning: attempted to branch over +/-127 (~a) bytes to label ~a from location $~x"
-                ;;            amount k (target-label-location current-target))))
-                ;;    (writeln
-                ;;     (format "label ~A offset ~A "
-                ;;             (target-label-location current-target)
-                ;;             (- actual (target-label-location current-target))))
-
-                (let* (
-                       [current (target-label-location current-target)]
-                       ; reconstruct the 32bit int from the 4 bytes
-                       [hi2 (arithmetic-shift (vector-ref(context-data prog)(+ current 3 )) 24)]
-                       [lo2 (arithmetic-shift (vector-ref(context-data prog)(+ current 2 )) 16)]
-                       [hi1 (arithmetic-shift (vector-ref(context-data prog)(+ current 1 )) 8)]
-                       [lo1 (vector-ref(context-data prog) current)]
-                       [whole (bitwise-ior (bitwise-ior (bitwise-ior lo1 hi1) lo2) hi2)]
-                       ; call the encoder that will place the offset in the correct place
-                       ; depending on the type of opcode
-                       [modified (encoder (list whole amount))])
+            ; if this is a global label
+            ; then this will attempt to be linked after the rest of the assembly,
+            ; if this is producing an image file
+            (if (is-global-label? k)                
+             ; this is an external symbol that will be linked at the end
+             (for [(current-target dest)]
+               (let*
+                   ([obj (add-external-target current-obj k (target-label-location current-target))])
+                (set-current-obj obj)))
+             ; otherwise resolve it
+             (for [(current-target dest)]
+                (let*
+                    ; find the label
+                    ([actual  
+                      (find-closest-label
+                       k
+                       (target-label-location current-target)
+                       (target-label-relative current-target))]
+                     ; calculate offset in bytes
+                     [amount (- actual (target-label-location current-target))]
+                     [encoder (target-label-immediate-encoder current-target)])
                   
-                  ; write the new result over the top of the old slots
+                  ;; (when (or (> amount 127) (< amount -127))
+                  ;;   (writeln
+                  ;;    (format "warning: attempted to branch over +/-127 (~a) bytes to label ~a from location $~x"
+                  ;;            amount k (target-label-location current-target))))
+                  ;;    (writeln
+                  ;;     (format "label ~A offset ~A "
+                  ;;             (target-label-location current-target)
+                  ;;             (- actual (target-label-location current-target))))
 
-                  (vector-set!
-                   (context-data prog)
-                   (target-label-location current-target)
-                   (lo-byte modified))
-                  (vector-set!
-                   (context-data prog)
-                   (+ 1 (target-label-location current-target))
-                   (hi-byte modified))
-                  (vector-set!
-                   (context-data prog)
-                   (+ 2 (target-label-location current-target))
-                   (lo-byte2 modified))
-                  (vector-set!
-                   (context-data prog)
-                   (+ 3 (target-label-location current-target))
-                   (hi-byte2 modified))
-                  )
-                ))))
-                           
-         ;write numbers to file!
-         (define out (open-output-file (emulator-program emu) #:exists 'replace #:mode 'binary))
-         ;; (write-byte (lo-byte (context-minl prog)) out)
-         ;; (write-byte (hi-byte (context-minl prog)) out)
-         (writeln (context-minl prog))
-         (writeln (context-maxl prog))
-         (for ([i  (vector-copy (context-data prog)(context-minl prog) (context-maxl prog) )])
-           (write-byte i out)
+                  (let* (
+                         [current (target-label-location current-target)]
+                         ; reconstruct the 32bit int from the 4 bytes
+                         [hi2 (arithmetic-shift (vector-ref(context-data prog)(+ current 3 )) 24)]
+                         [lo2 (arithmetic-shift (vector-ref(context-data prog)(+ current 2 )) 16)]
+                         [hi1 (arithmetic-shift (vector-ref(context-data prog)(+ current 1 )) 8)]
+                         [lo1 (vector-ref(context-data prog) current)]
+                         [whole (bitwise-ior (bitwise-ior (bitwise-ior lo1 hi1) lo2) hi2)]
+                         ; call the encoder that will place the offset in the correct place
+                         ; depending on the type of opcode
+                         [modified (encoder (list whole amount))])
+                    
+                    ; write the new result over the top of the old slots
+
+                    (vector-set!
+                     (context-data prog)
+                     (target-label-location current-target)
+                     (lo-byte modified))
+                    (vector-set!
+                     (context-data prog)
+                     (+ 1 (target-label-location current-target))
+                     (hi-byte modified))
+                    (vector-set!
+                     (context-data prog)
+                     (+ 2 (target-label-location current-target))
+                     (lo-byte2 modified))
+                    (vector-set!
+                     (context-data prog)
+                     (+ 3 (target-label-location current-target))
+                     (hi-byte2 modified))
+                    )
+                  )))))
+
+         ; for both objects and images we begin by building the current object's data
+         ; and then linking in other files.  after that, we either write the object file as-is
+         ; or if we are building an image then we perform the final link relocations
+         ; and write the resulting binary data to the image file.
+
+         (begin ; write object file
+           ; set the data
+           (set-obj-file-data!
+            current-obj              
+            (vector-copy (context-data prog)(context-minl prog) (context-maxl prog)))
+           ; now merge linked files together 
+           (let
+               ([merged
+                 (for/fold ([merge (create-blank-obj-file)])
+                           ([fn link-list])
+                   ; only merge if this file has not already been linked
+                   (let ([bad (for/first ([index (obj-file-object-composition merge)]
+                                          #:when (equal? fn (hash-ref (obj-file-string-table merge) index)))
+                                #t)])
+                     (if bad
+                         (begin
+                           (displayln (format "file ~a already linked, skipping.." fn))
+                           merge )
+                         (merge-objs merge (read-obj-file fn)))))])
+
+             ; now we can merge with the current object.
+             ; first, check that we don't have any global labels in the current object
+             ; that are also in the merged object 
+             (for ([id (map car (obj-file-symbol-table current-obj))])
+               (let ([name (hash-ref (obj-file-string-table current-obj) id)])
+                 (when (hash-has-key? (obj-file-reverse-string-table merged) name)
+                   (error (format "could not link as the global symbol ~a already exists" name)))))
+             
+             (set-current-obj (merge-objs current-obj merged)))
+
+           ;; (displayln "merged object files:")
+           ;; (displayln current-obj)
            )
-         (wdb "closing")
-         (close-output-port out)
-         (displayln "")
-         )]))
+         ;write numbers to file!
+         (if is-image?
+             (begin
+               ; now we must perform the actual relocations where we re-write the branch instructions.
+               ; this is similar the the local branch code above, except here we do not have the
+               ; correct address encoding function.  to get it we need to look at the instruction
+               ; and map it back to the correct opcode/addressingmode/encoder.  There aren't many
+               ; instructions that support labels as operands and many (b family) can be handled in
+               ; one case.
+               (let ([symbol-lookup (make-immutable-hash (obj-file-symbol-table current-obj))])
+                 (for ([pair (obj-file-target-table current-obj)])
+                   (match-let*([(cons string-index offset) pair]
+                               [actual-location (hash-ref symbol-lookup string-index)]
+                               [amount (- actual-location offset)]
+                               [top-byte (vector-ref(obj-file-data current-obj)(+ offset 3 ))]
+                               [hi2 (arithmetic-shift (vector-ref(obj-file-data current-obj)(+ offset 3 )) 24)]
+                               [lo2 (arithmetic-shift (vector-ref(obj-file-data current-obj)(+ offset 2 )) 16)]
+                               [hi1 (arithmetic-shift (vector-ref(obj-file-data current-obj)(+ offset 1 )) 8)]
+                               [lo1 (vector-ref(obj-file-data current-obj) offset)]
+                               [whole (bitwise-ior (bitwise-ior (bitwise-ior lo1 hi1) lo2) hi2)]
+                               [rewrite
+                                (λ (offset modified)
+                                  (begin
+                                    (vector-set!
+                                     (obj-file-data current-obj)
+                                     offset
+                                     (lo-byte modified))
+                                    (vector-set!
+                                     (obj-file-data current-obj)
+                                     (+ 1 offset)
+                                     (hi-byte modified))
+                                    (vector-set!
+                                     (obj-file-data current-obj)
+                                     (+ 2 offset)
+                                     (lo-byte2 modified))
+                                    (vector-set!
+                                     (obj-file-data current-obj)
+                                     (+ 3 offset)
+                                     (hi-byte2 modified))
+                                    ))]
+                                   
+                               )
+                     (cond
+                       [(equal? top-byte #b0101010)
+                        ; this covers all the b.cond instructions
+                        (let* ([encoder (encoders-address-encoder (hash-ref opcode-encoders 'imm19))]
+                               [modified (encoder (list whole amount))])
+                          (rewrite offset modified))]
+
+                       [(or (equal? top-byte #b10010100)
+                            (equal? top-byte #b00010100))
+                       ; B, bl imm26
+                        (let* ([encoder (encoders-address-encoder (hash-ref opcode-encoders 'imm26))]
+                               [modified (encoder (list whole amount))])
+                          (rewrite offset modified))]
+                       [(equal? top-byte #b00010000)
+                       ; adr 'immlo-immhi-rd
+                        (let* ([encoder (encoders-address-encoder (hash-ref opcode-encoders 'immlo-immhi-rd))]
+                               [modified (encoder (list whole amount))])
+                          (rewrite offset modified))]
+                       [(or (equal? top-byte #b10110100)
+                            (equal? top-byte #b10110101)
+                            (equal? top-byte #b01011000))
+                       ; cbz, cbnz
+                        (let* ([encoder (encoders-address-encoder (hash-ref opcode-encoders 'imm19-rt))]
+                               [modified (encoder (list whole amount))])
+                          (rewrite offset modified))]
+
+                       [else (error (format "could not relocate instruction ~A" whole))])
+
+                     )))
+
+               
+               (let ([out (open-output-file filename #:exists 'replace #:mode 'binary)])
+                 (for ([i  (obj-file-data current-obj)])
+                   (write-byte i out)
+                   )
+                 (wdb "closing")
+                 (close-output-port out))
+               )
+             (begin ; write object file
+               (displayln "writing object file")
+               (write-obj-file current-obj filename)
+               
+               )
+             ))]))
   
 (provide (all-defined-out))
 (provide (for-syntax immediate system-register opcode register register-32 register-64 label label-targ))
