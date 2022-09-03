@@ -443,9 +443,9 @@
     ['sub 'reg-reg-reg   'rm-rn-rd                           #b11001011000000000000000000000000 b31 #f]
     ['wfe 'none          'none                               #b11010101000000110010000001011111 #f #f]))))
 
-(struct context (data location minl maxl jump-table branches-waiting breakpoints) #:mutable #:transparent)
+(struct context (data location minl maxl jump-table branches-waiting linker-labels) #:mutable #:transparent)
 (struct target-label (immediate-encoder relative location) #:transparent)
-(define prog (context (make-vector 65536000 0) 0 0 0 (make-hash) (make-hash) (mutable-set)))
+(define prog (context (make-vector 65536000 0) 0 0 0 (make-hash) (make-hash) (list)))
 
 (define (update-min v)
   (cond [(< v (context-minl prog)) (set-context-minl! prog v)]))
@@ -513,6 +513,17 @@
 (define (set-current-value v)
   (vector-set! (context-data prog) (context-location prog) v))
 
+(define (set-linker-resolved-label global-label location)
+  (displayln (format "label ~a loc ~a" global-label location))
+  ; append label * loction to the linker-labels list
+  (set-context-linker-labels!
+   prog
+   (cons
+    (cons global-label location)
+    (context-linker-labels prog))))
+         
+
+
 (define (try-set-jump-source expr f)
   (wdb "in try set jump source with ~a" expr)
   (cond [(symbol? expr)
@@ -561,9 +572,12 @@
     (if (list? e)
         (write-values e)
         (write-value e))))
-
+(define (write-value-16 e)
+  (write-values
+   (list
+     (lo-byte e)
+     (hi-byte e))))
 (define (write-value-32 e)
-  ;used for writing ARM 32 bit instructions
   (write-values
    (list
      (lo-byte e)
@@ -571,7 +585,6 @@
      (lo-byte2 e)
      (hi-byte2 e))))
 (define (write-value-64 e)
-  ;used for writing ARM 32 bit instructions
   (let ([msb (arithmetic-shift e -32)])
     (write-value-32 e)
     (write-value-32 msb)))
@@ -589,6 +602,15 @@
     (pattern x:id #:when
              (let ([s (symbol->string (syntax-e #'x))])
                (or (string-prefix? s ":"))))))
+
+
+(define-syntax (resolve-global-label-address stx)
+  (syntax-parse stx
+    [(_ global-label:label)
+;     #:with label (symbol->string (syntax-e #'label))
+     #'(begin
+         (set-linker-resolved-label 'global-label (here))
+         (set-location (+ 4 (context-location prog))))]))
 
 (define-syntax (label-loc stx)
   (syntax-parse stx
@@ -744,7 +766,7 @@
              #:when (not (syntax-e #'x.is32)))))
 (define-syntax (arm-line stx)
 ;  (writeln stx)
-  (syntax-parse stx #:datum-literals (= ! LSL)
+  (syntax-parse stx #:datum-literals (= ! LSL )
    ; nop
    [(_ (~optional label:label) oc:opcode)
     #'(begin
@@ -851,6 +873,7 @@
    
    [(_ label:label)
      #'(try-set-jump-source `label set-jump-source-current)]
+
    [(_ label:label e:expr)
      #'(begin (try-set-jump-source `label set-jump-source-current) e) ]
    [(_ (~optional label:label) (~literal /=) t:nat )
@@ -858,6 +881,7 @@
          (~? (try-set-jump-source `label set-jump-source-current))
          (align t))]
 
+   
    [(_ v:identifier = e:expr)
      #'(define v e)]
 
@@ -872,7 +896,7 @@
   (syntax-parse stx
     [(_ v ... )
      #'(write-values (list v ...))]))
-           
+
 (define (find-closest-label key location relative)
   (define (aux input)
     (let-values ([(input f)
@@ -951,15 +975,6 @@
                      ; calculate offset in bytes
                      [amount (- actual (target-label-location current-target))]
                      [encoder (target-label-immediate-encoder current-target)])
-                  
-                  ;; (when (or (> amount 127) (< amount -127))
-                  ;;   (writeln
-                  ;;    (format "warning: attempted to branch over +/-127 (~a) bytes to label ~a from location $~x"
-                  ;;            amount k (target-label-location current-target))))
-                  ;;    (writeln
-                  ;;     (format "label ~A offset ~A "
-                  ;;             (target-label-location current-target)
-                  ;;             (- actual (target-label-location current-target))))
 
                   (let* (
                          [current (target-label-location current-target)]
@@ -1017,11 +1032,14 @@
                          (begin
                            (displayln (format "file ~a already linked, skipping.." fn))
                            merge )
-                         (merge-objs merge (read-obj-file fn)))))])
+                         (begin
+                           (displayln (format "linking file ~a.." fn))
+                         (merge-objs merge (read-obj-file fn))))))])
 
              ; now we can merge with the current object.
              ; first, check that we don't have any global labels in the current object
-             ; that are also in the merged object 
+             ; that are also in the merged object
+             (displayln "resolving linked objects with image file..")
              (for ([id (map car (obj-file-symbol-table current-obj))])
                (let ([name (hash-ref (obj-file-string-table current-obj) id)])
                  (when (hash-has-key? (obj-file-reverse-string-table merged) name)
@@ -1035,13 +1053,46 @@
          ;write numbers to file!
          (if is-image?
              (begin
+  
+               
                ; now we must perform the actual relocations where we re-write the branch instructions.
                ; this is similar the the local branch code above, except here we do not have the
                ; correct address encoding function.  to get it we need to look at the instruction
                ; and map it back to the correct opcode/addressingmode/encoder.  There aren't many
                ; instructions that support labels as operands and many (b family) can be handled in
                ; one case.
-               (let ([symbol-lookup (make-immutable-hash (obj-file-symbol-table current-obj))])
+               (let ([symbol-lookup (make-immutable-hash (obj-file-symbol-table current-obj))]
+                     [rewrite
+                      (λ (offset modified)
+                        (begin
+                          (vector-set!
+                           (obj-file-data current-obj)
+                           offset
+                           (lo-byte modified))
+                          (vector-set!
+                           (obj-file-data current-obj)
+                           (+ 1 offset)
+                           (hi-byte modified))
+                          (vector-set!
+                           (obj-file-data current-obj)
+                           (+ 2 offset)
+                           (lo-byte2 modified))
+                          (vector-set!
+                           (obj-file-data current-obj)
+                           (+ 3 offset)
+                           (hi-byte2 modified))
+                          ))])
+                 ; first we can write fully resolved label addresses where requested from the
+                 ; special resolve-global-label function
+                 (for* ([x (context-linker-labels prog)])
+                   (match-let*([(cons label location) x]
+                               [string-index (hash-ref (obj-file-reverse-string-table current-obj) (symbol->string label))]
+                               [actual-location (hash-ref symbol-lookup string-index)])
+                     (begin
+                       (rewrite location actual-location)
+                       )))
+                 
+
                  (for ([pair (obj-file-target-table current-obj)])
                    (match-let*([(cons string-index offset) pair]
                                [actual-location (hash-ref symbol-lookup string-index)]
@@ -1052,26 +1103,7 @@
                                [hi1 (arithmetic-shift (vector-ref(obj-file-data current-obj)(+ offset 1 )) 8)]
                                [lo1 (vector-ref(obj-file-data current-obj) offset)]
                                [whole (bitwise-ior (bitwise-ior (bitwise-ior lo1 hi1) lo2) hi2)]
-                               [rewrite
-                                (λ (offset modified)
-                                  (begin
-                                    (vector-set!
-                                     (obj-file-data current-obj)
-                                     offset
-                                     (lo-byte modified))
-                                    (vector-set!
-                                     (obj-file-data current-obj)
-                                     (+ 1 offset)
-                                     (hi-byte modified))
-                                    (vector-set!
-                                     (obj-file-data current-obj)
-                                     (+ 2 offset)
-                                     (lo-byte2 modified))
-                                    (vector-set!
-                                     (obj-file-data current-obj)
-                                     (+ 3 offset)
-                                     (hi-byte2 modified))
-                                    ))]
+                       
                                    
                                )
                      (cond
@@ -1110,6 +1142,7 @@
                    (write-byte i out)
                    )
                  (wdb "closing")
+                 (displayln (format "wrote image file ~a" filename))
                  (close-output-port out))
                )
              (begin ; write object file
