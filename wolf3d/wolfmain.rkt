@@ -7,7 +7,7 @@
 (require racket/string)
 (require racket/match)
 (require threading)
-(require "periph.rkt" "stack.rkt")
+(require "periph.rkt" "stack.rkt" "struct.rkt")
 
 (define s-frame-size 256) ; size of all saved registers
 (define SYNC_INVALID_EL1t 0)
@@ -398,271 +398,34 @@
   (POP x30)
   ret x30
 
-;; (define-syntax (asm-get-field stx)  
-;;   (syntax-parse stx
-;;     [(_ ctx field-name size offset)
-;;      #:when (equal? (eval (syntax-e #'size)) 64)
-;;      #:with ident (format-id #'ctx "~a-get" #'field-name)
-;;      #'(define-syntax (ident stx)
-;;          (syntax-parse stx
-;;            [(_ target:register base:register)
-;;             #:with actual-target (format-id this-syntax "X~a" (syntax-e #'target.regnum))
-;;             #'{ldr actual-target (base @offset)}]))]
+(asm-struct _voffset_msg
+  ([total-size 4]     ; total buffer size bytes including headers
+   [request-code 4]  ; request / response code (0 = request)
+   ;begin tags
+   [tag-id 4]
+   [request-size 4]
+   [tag-request-code 4]
+   [x-loc 4]
+   [y-loc 4]
+   [end-tag 4]))
 
-;;     [(_ ctx field-name size offset)
-;;      #:when (equal? (eval (syntax-e #'size)) 32)
-;;      #:with ident (format-id #'ctx "~a-get" #'field-name)
-;;      #'(define-syntax (ident stx)
-;;          (syntax-parse stx
-;;            [(_ target:register base:register)
-;;             #:with actual-target (format-id this-syntax "W~a" (syntax-e #'target.regnum))
-;;             #'{ldr actual-target (base @offset)}]))]
+(define-syntax-parser write-virtual-offset
+  [(_ base:register y-loc:register)
+   #'{
+      (_voffset_msg/total-size-set (* 8 4) base) ;note this splats x0
+      (_voffset_msg/request-code-set 0 base)
+      (_voffset_msg/tag-id-set $48009 base)
+      (_voffset_msg/request-size-set 8 base)
+      (_voffset_msg/tag-request-code-set 0 base)
+      (_voffset_msg/x-loc-set 0 base)
+      (_voffset_msg/y-loc-set y-loc base)
+      (_voffset_msg/end-tag-set 0 base)
+     }])
 
-;;     [(_  ctx field-name size offset)
-;;      #:when (equal? (eval (syntax-e #'size)) 16)
-;;      #:with ident (format-id #'ctx "~a-get" #'field-name)
-;;      #'(define-syntax (ident stx)
-;;          (syntax-parse stx
-;;            [(_ target:register base:register)
-;;             #:with actual-target (format-id this-syntax "W~a" (syntax-e #'target.regnum))
-;;             #'{ldrh actual-target (base @offset)}]))]
-
-;;     [(_  ctx field-name size offset)
-;;      #:when (equal? (eval (syntax-e #'size)) 8)
-;;      #:with ident (format-id #'ctx "~a-get" #'field-name)
-;;      #'(define-syntax (ident stx)
-;;          (syntax-parse stx
-;;            [(_ target:register base:register)
-;;             #:with actual-target (format-id this-syntax "W~a" (syntax-e #'target.regnum))
-;;             #'{ldrb actual-target (base @offset)}]))]
-
-;;     [(_ ctx field-name size offset)
-;;      #:with ident (format-id #'ctx "~a-get" #'field-name)
-;;      #'(define-syntax (ident stx)
-;;          (syntax-parse stx
-;;            [(_ target:register base:register)
-;;             #'(error "cannot get this field, it is too large to fit in a register!")]))]
-;;     ))
-
-;; (define-syntax-parser load-immediate
-;;   [(_ target:register value:expr)
-;;    #'(cond
-;;        [(> (expt 2 16) value)
-;;         { mov target @value  }]
-;;        [(> (expt 2 32) value)
-;;         {
-;;          mov target @(bitwise-and value $FFFF)
-;;          movk target @(arithmetic-shift value -16) LSL @16
-;;          }]
-;;        [else (error (format "load-immeditate: value too large, not currently supported ~a" value))])])
-
-
-;; (define-syntax (asm-set-field stx)  
-;;   (syntax-parse stx
-;;     [(_ ctx field-name size offset)
-;;      #:when (equal? (eval (syntax-e #'size)) 64)
-;;      #:with ident (format-id #'ctx "~a-set" #'field-name)
-;;      #'(define-syntax (ident stx)
-;;          (syntax-parse stx
-;;            [(_ target:register base:register)
-;;             #:with actual-target (format-id this-syntax "X~a" (syntax-e #'target.regnum))
-;;             #'{str actual-target (base @offset)}]))]
-
-;;     [(_ ctx field-name size offset)
-;;      #:when (equal? (eval (syntax-e #'size)) 32)
-;;      #:with ident (format-id #'ctx "~a-set" #'field-name)
-;;      #'(define-syntax (ident stx)
-;;          (syntax-parse stx
-;;            [(_ target:register base:register)
-;;             #:with actual-target (format-id this-syntax "W~a" (syntax-e #'target.regnum))
-;;             #'{str actual-target (base @offset)}]
-;;            [(_ target:expr base:register)
-;;             #'{(load-immediate w0 target)
-;;                str w0 (base @offset)}]))]
-
-;;     [(_  ctx field-name size offset)
-;;      #:when (equal? (eval (syntax-e #'size)) 16)
-;;      #:with ident (format-id #'ctx "~a-set" #'field-name)
-;;      #'(define-syntax (ident stx)
-;;          (syntax-parse stx
-;;            [(_ target:register base:register)
-;;             #:with actual-target (format-id this-syntax "W~a" (syntax-e #'target.regnum))
-;;             #'{strh actual-target (base @offset)}]))]
-
-;;     [(_  ctx field-name size offset)
-;;      #:when (equal? (eval (syntax-e #'size)) 8)
-;;      #:with ident (format-id #'ctx "~a-set" #'field-name)
-;;      #'(define-syntax (ident stx)
-;;          (syntax-parse stx
-;;            [(_ target:register base:register)
-;;             #:with actual-target (format-id this-syntax "W~a" (syntax-e #'target.regnum))
-;;             #'{strb actual-target (base @offset)}]))]
-
-;;     [(_ ctx field-name size offset)
-;;      #:with ident (format-id #'ctx "~a-set" #'field-name)
-;;      #'(define-syntax (ident stx)
-;;          (syntax-parse stx
-;;            [(_ target:register base:register)
-;;             #'(error "cannot set this field, it is too large to fit in a register!")]))]
-;;         ))
-
-
-  
-;; (define-syntax (asm-struct stx)
-;;   (syntax-parse stx 
-;;     [(_ struct-name:id ([member-name:id size:expr]...))
-;;      #:with size-name (format-id this-syntax "~a/sizeof" #'struct-name)
-;;      #:with ([field-name field-size offset] ... )
-;;      (let-values
-;;          ([(res off)
-;;            (for/fold
-;;                ([result '()][offsets '(0)])
-;;                ([name (syntax->list #'(member-name ...))]
-;;                 [size (syntax->list #'(size ...))])
-;;              (values
-;;               (cons
-;;                (list
-;;                 ; syntax object for the function identifier
-;;                 (format-id this-syntax "~a/~a" #'struct-name (syntax-e name))
-;;                 size
-;;                 ; syntax object represeting the addition of the accumulated offsets
-;;                 (datum->syntax this-syntax (cons '+ offsets)))
-;;                result)
-;;               ; accumulate field offsets
-;;               (cons size offsets)))])
-;;        res) 
-     
-;;      #'(begin
-;;          ; generate sizeof struct
-;;          (define (size-name) (+ size ...))
-;;          (define-for-syntax (size-name) (+ size ...))
-;;          ; generate each field name offset
-;;          (define (field-name) offset) ...
-;;          (define-for-syntax (field-name) offset) ...
-;;          (asm-get-field struct-name field-name field-size offset) ...
-;;          (asm-set-field struct-name field-name field-size offset) ...
-;;          )
-;;      ]))
-
-;; (asm-struct test-struct
-;;   ([field1 32]
-;;    [field2 32]
-;;    [ptr1 64]
-;;    [ptr2 64]))
-
-;; (asm-struct _voffset_msg
-;;   ([total-size 32]     ; total buffer size bytes including headers
-;;    [request-code 32]  ; request / response code (0 = request)
-;;    ;begin tags
-;;    [tag-id 32]
-;;    [request-size 32]
-;;    [tag-request-code 32]
-;;    [x-loc 32]
-;;    [y-loc 32]
-;;    [end-tag 32]))
-
-;; (define-syntax-parser write-virtual-offset
-;;   [(_ base:register y-loc:register)
-;;    #'{
-;;       (_voffset_msg/total-size-set(* 5 4) base) ;note this splats x0
-;;       (_voffset_msg/request-code-set 0 base)
-;;       (_voffset_msg/tag-id-set $48009 base)
-;;       (_voffset_msg/request-size-set 8 base)
-;;       (_voffset_msg/tag-request-code-set 0 base)
-;;       (_voffset_msg/x-loc-set 0 base)
-;;       (_voffset_msg/y-loc-set y-loc base)
-;;       (_voffset_msg/end-tag-set 0 base)
-;;      }])
-
-;;     (write-value-32 (* 8 4)) ; total buffer size bytes including headers
-;;     (write-value-32 0) ; request / response code (0 = request)
-;;     ;begin tags
-;;     ; set virtoff
-;;       (write-value-32 $48009)
-;;       (write-value-32 8) ; value buffer size
-;;  :voffset-req
-;; (write-value-32 0) ; 0 = request
-;;       (write-value-32 0) ; x
-;;    :voffset-y
-;;       (write-value-32 0); y
-;;     (write-value-32 0) ;end tag
-
-
-;; (define-syntax (test-struct/field2-get stx)
-;;    (syntax-parse
-;;     stx
-;;     ((_ target:register base:register)
-;;      #:with
-;;      actual-target
-;;      (format-id this-syntax "W~a" (syntax-e #'target.regnum))
-;;      #''(arm-block (arm-line ldr actual-target (base #:immediate (+ 32 0)))))))
-
-;(test-struct/field2-get x0 x1)
-
-;; (asm-struct test-struct2
-;;   ([field1 32]
-;;    [field2 (* 32 24)]
-;;    [ptr1 64]
-;;    [ptr2 64]))
-;; (test-struct2/sizeof)
-;; (test-struct2/field1)
-;; (test-struct2/field2)
-
-;; ;; (test-struct2/ptr1)
-;; ;; (define-syntax (test2 stx)
-;; ;;   (syntax-parse stx
-;; ;;     [(_) #'64]))
-
-;; ;; (asm-get-field test-struct2 (test2))
-
-;; (test-struct/sizeof) ; 192
-;; (test-struct/field1)  ; 0
-;; (test-struct/field2) ; 32
-;; (test-struct/ptr1) ; 64
-;; (test-struct/ptr2) ; 128
-
-;; (define-syntax (test-struct/field2-get stx)
-;;    (syntax-parse
-;;     stx
-;;     ((_ target:register base:register)
-;;      #:with actual-target  (format-id this-syntax "X~a" (syntax-e #'target.regnum))
-;;      #:do (displayln 'target.regnum)
-;;      #'{ldr actual-target (base @32)})))
-
-;(test-struct/field2-get x1 x0)
-;(test-struct/field2-get x1 x0)
-
-(subr page-flip ([ptr x0]) [x0 x1 x2] {
+(subr page-flip ([ptr x16]) [x0 x1 x2 x16] {
   ;pass y value in x3
   adr ptr MBOX-VOFFSET-MSG:
-
-;  (write-virtual-offset ptr x3)
-      
-  mov x2 @4
-  mov x1 @(* 8 4)
-  str w1 (ptr @0)  ; msg->size
-  add ptr ptr x2    ; +=4
-  mov x1 @0
-  str w1 (ptr @0) ; msg->request/response
-  add ptr ptr x2    ; +=4
-  mov x1 @4
-  lsl x1 x1 @16
-  movk x1 @$8009 
-  str w1 (ptr @0) ;msg->tag
-  add ptr ptr x2    ; +=4
-  mov x1 @8
-  str w1 (ptr @0) ; msg->value buffer size
-  add ptr ptr x2    ; +=4
-  mov x1 @0
-  str w1 (ptr @0) ; msg->tag request
-  add ptr ptr x2    ; +=4
-  str w1 (ptr @0) ; msg->x offset
-  add ptr ptr x2    ; +=4
-  mov x1 x3
-  str w1 (ptr @0) ; msg->y offset
-  add ptr ptr x2    ; +=4
-  mov x1 @0
-  str w1 (ptr @0) ; msg->end tag
+  (write-virtual-offset ptr x3)
   adr x8 MBOX-VOFFSET-MSG:
   bl send-vcore-msg:
 })
