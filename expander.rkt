@@ -385,7 +385,7 @@
     ['cmp  'reg-reg      'rm-rn                              #b11101011000000000000000000011111 b31 #f]
     ['csel 'reg-reg-reg-cond 'rm-cond-rn-rd                  #b10011010100000000000000000000000 b31 #f]
     ['eor 'reg-reg-reg   'rm-rn-rd                           #b11001010000000000000000000000000 b31 #f]
-    ['eret 'none         'none                               #b11010110100111110000001111100000 #f #f] 
+    ['eret 'none         'none                               #b11010110100111110000001111100000 #f #f ]
 
     ['ldp 'reg-reg_reg-imm_ 'imm7-rd2-rn-rd                  #b10101001010000000000000000000000 b31 shift-2-or-3]
     ['ldr 'reg_reg_imm  'imm9-rn-rd                          #b11111000010000000000010000000000 b30 #f]
@@ -416,6 +416,7 @@
     ['msr 'sysreg-reg    'sysreg-rt                          #b11010101000100000000000000000000 #f #f]
     ['msr 'sysreg-imm4   'sysreg-imm4                        #b11010101000000000000000000011111 #f #f]
     ['neg 'reg-reg       'rm-rd                              #b11001011000000000000001111100000 b31 #f]
+    ['nop 'none          'none                               #b11010101000000110010000000011111 #f #f]
     ['orr 'reg-reg-reg   'rm-rn-rd                           #b10101010000000000000000000000000 b31 #f]
     ['ret 'reg           'rn                                 #b11010110010111110000000000000000 #f #f]
 
@@ -610,7 +611,7 @@
 ;     #:with label (symbol->string (syntax-e #'label))
      #'(begin
          (set-linker-resolved-label 'global-label (here))
-         (set-location (+ 4 (context-location prog))))]))
+         (set-location (+ 8 (context-location prog))))]))
 
 (define-syntax (label-loc stx)
   (syntax-parse stx
@@ -711,8 +712,8 @@
              #:do [(define sym (syntax-e (attribute x)))
                    (define ocs
                      (list 'add 'adr 'and 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
-                           'bl 'cbz 'cbnz 'csel 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'orr 'ret
-                           'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'wfe))]
+                           'bl 'cbz 'cbnz 'csel 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'nop
+                           'orr 'ret 'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'wfe))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
     #:description "register"
@@ -949,7 +950,9 @@
               obj)))
 
          (displayln "begin")
-         a ...
+         ; if this is an object file, only build if the source file is newer than the output file
+         
+         a ... 
          (displayln "DONE")
          (hash-for-each
           (context-branches-waiting prog)
@@ -1062,9 +1065,9 @@
                ; instructions that support labels as operands and many (b family) can be handled in
                ; one case.
                (let ([symbol-lookup (make-immutable-hash (obj-file-symbol-table current-obj))]
-                     [rewrite
+                     [write-global-address
                       (λ (offset modified)
-                        (begin
+                        (let ([msb (arithmetic-shift modified -32)])
                           (vector-set!
                            (obj-file-data current-obj)
                            offset
@@ -1081,6 +1084,43 @@
                            (obj-file-data current-obj)
                            (+ 3 offset)
                            (hi-byte2 modified))
+                          (vector-set!
+                           (obj-file-data current-obj)
+                           (+ 4 offset)
+                           (lo-byte msb))
+                          (vector-set!
+                           (obj-file-data current-obj)
+                           (+ 5 offset)
+                           (hi-byte msb))
+                          (vector-set!
+                           (obj-file-data current-obj)
+                           (+ 6 offset)
+                           (lo-byte2 msb))
+                          (vector-set!
+                           (obj-file-data current-obj)
+                           (+ 7 offset)
+                           (hi-byte2 msb))
+                          ))]
+                     [rewrite
+                      (λ (offset modified)
+                        (begin 
+                          (vector-set!
+                           (obj-file-data current-obj)
+                           offset
+                           (lo-byte modified))
+                          (vector-set!
+                           (obj-file-data current-obj)
+                           (+ 1 offset)
+                           (hi-byte modified))
+                          (vector-set!
+                           (obj-file-data current-obj)
+                           (+ 2 offset)
+                           (lo-byte2 modified))
+                          (vector-set!
+                           (obj-file-data current-obj)
+                           (+ 3 offset)
+                           (hi-byte2 modified))
+
                           ))])
                  ; first we can write fully resolved label addresses where requested from the
                  ; special resolve-global-label function
@@ -1089,6 +1129,7 @@
                                [string-index (hash-ref (obj-file-reverse-string-table current-obj) (symbol->string label))]
                                [actual-location (hash-ref symbol-lookup string-index)])
                      (begin
+                       (displayln (format "rewriting label ~a from ~a to ~a" label location actual-location))
                        (rewrite location actual-location)
                        )))
                  
@@ -1146,11 +1187,22 @@
                  (close-output-port out))
                )
              (begin ; write object file
-               (displayln "writing object file")
+               (displayln (format "writing object file ~a" filename))
                (write-obj-file current-obj filename)
                
                )
-             ))]))
+             )
+           
+         
+         ;; (if (or (not (file-exists? 'filename))
+         ;;           (> 
+         ;;            (file-or-directory-modify-seconds  (resolved-module-path-name (module-path-index-resolve (syntax-source-module #'filename))))
+         ;;            (file-or-directory-modify-seconds 'filename)))
+         ;;     (assemble)
+
+         ;; (displayln (format "skipping ~a - already up to date" filename))
+         ;; )
+     )]))
   
 (provide (all-defined-out))
 (provide (for-syntax immediate system-register opcode register register-32 register-64 label label-targ))

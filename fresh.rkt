@@ -2,7 +2,6 @@
 (require (for-syntax syntax/parse racket/stxparam))
 (require racket/stxparam)
 (require "periph.rkt" "stack.rkt")
-(set-emulator-program! emu "kernel8.img")
 
 (define-syntax (wait stx)
   (syntax-parse stx
@@ -46,10 +45,8 @@
      #'(begin (begin (debug-str name #f) (debug-reg reg)) ...)]))
 
 
-(define pi 'pi3)
 
-
-(aarch64 {
+(aarch64 "kernel8.img" [] {
 
      ; check cpu core
      mrs x0 mpidr_el1
@@ -75,14 +72,14 @@
     lsl x0 x0 @16
     movk x0 @$DEAD
     lsl x0 x0 @16
-    movk x0 @$bEEf
+    movk x0 @$bEEF
 
     (debug-reg x0 w0)
     
  :loop
      b loop:
 
-;  :send-char
+;; inline the code and label for the send-char subroutine     
 (create-send-char)
 
 :dump-regs
