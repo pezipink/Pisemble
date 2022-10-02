@@ -8,11 +8,6 @@
 
 (aarch64 "2dgfx.obj" [] {
 
-
-
-; layout the textures used in the raycast texture mapping.
-; each of these is a 64x64 block of 32bit pixel data.
-; this can be indexed by (64*64*4) >> n                         
  
 ; layout grpahics used in the non-3d parts of the game.
 ; first there will be a header of a struct
@@ -25,7 +20,7 @@
 :DATA-2d-image-header
 (let ([image-bytes
        (~>>
-        (file->lines "C:/repos/Chocolate-Wolfenstein-3D/wolfpics/index.dat")
+        (file->lines "C:/repos/pisemble/wolf3d/wolfpics/index.dat")
         (map (λ (s) (string-split s ";")))
         (map (match-lambda
 
@@ -46,4 +41,47 @@
     }
   ))
 })
+
+(aarch64 "textures.obj" [] {
+
+
+
+; these are the textures used in the raycaster
+; they are all 64*64 bitmaps of 4 byte pixels                            
+; the program can work out the indexing 
+
+(let*
+    ([texture-bytes
+      (~>>
+       (directory-list "c:/repos/pisemble/wolf3d/wolftex")
+       (map path->string)
+       (filter (λ (path) (string-suffix? path ".dat")))
+       (sort _ (λ (path1 path2)
+                 (< (string->number (car (string-split path1 "." )))
+                    (string->number (car (string-split path2 "." ))))))
+       (map (λ (path) (bytes->list (file->bytes (string-append "c:/repos/pisemble/wolf3d/wolftex/" path))))))])
+  (begin
+    {
+     :DATA-textures
+     (write-values texture-bytes)
+    }))
+    
+})
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

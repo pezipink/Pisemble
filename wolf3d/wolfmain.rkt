@@ -195,7 +195,7 @@
 
 (define VCORE-MBOX (+ PERIPH-BASE $00B880))
 
-(aarch64 "kernel8.img" ["2dgfx.obj"] {
+(aarch64 "kernel8.img" ["2dgfx.obj" "textures.obj"] {
      width = 320
      height = 200      
      set-offset = $1C
@@ -915,6 +915,7 @@ error_invalid_el0_32:
 /= 8
   :2d-image-header-address (resolve-global-label-address :DATA-2d-image-header)
   :2d-images-address (resolve-global-label-address :DATA-2d-images)
+  :textures-address (resolve-global-label-address :DATA-textures)
   (periph-addresses)
   :dELAY (write-value-64 $FFFFF)
   :dELAY2 (write-value-64 200000)
