@@ -5,7 +5,7 @@
 (define magic-number #x6a626f6d65736970)
 
 (struct obj-file (
-  ; a string table is a hash of int * string
+  ; a string table is a hash of int * string (symbol strings - not supporting runtime strings yet)
   string-table
   ; runtime only reverse string lookup (not serialized)
   reverse-string-table
@@ -378,4 +378,5 @@
  set-obj-file-data!
 
          )
+
 
