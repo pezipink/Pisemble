@@ -821,6 +821,14 @@
         ;rewrite this as ADD (mov sp x is an alias for add sp x 0 )
       (write-instruction 'add 'reg-reg-imm `rt.is32 (list `rt.regnum `rn.regnum) (list 0) #f))
     ]
+   ;mov x0 sp
+   [(_ (~optional label:label) oc:opcode rt:register rn:register)
+    #:when (equal? (syntax-e #'rn) 'sp)
+    #'(begin
+      (~? (try-set-jump-source `label set-jump-source-current))
+        ;rewrite this as ADD (mov x sp is an alias for add x sp 0 )
+      (write-instruction 'add 'reg-reg-imm `rt.is32 (list `rt.regnum `rn.regnum) (list 0) #f))
+    ]
    ; mov wzr x1
    [(_ (~optional label:label) oc:opcode rt:register rm:register)
     #'(begin
@@ -831,7 +839,7 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-reg-imm `rt.is32 (list `rt.regnum `rn.regnum) (list n) #f))]
-   ; str x1 [sp @-16] !
+   ; str x1 [sp @-16] !   PRE INDEX
    [(_ (~optional label:label) oc:opcode rt:register (rn:register #:immediate n) !)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
@@ -841,7 +849,12 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg_reg-imm_ `rt.is32 (list `rt.regnum `rn.regnum) (list n) #f))]
-   ;str x1 [x2] @16
+   ; specical case for str [x1] rewrites to str [x1] @0
+   [(_ (~optional label:label) oc:opcode rt:register (rn:register))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg_reg-imm_ `rt.is32 (list `rt.regnum `rn.regnum) (list 0) #f))]
+   ;str x1 [x2] @16 POST INDEX
    [(_ (~optional label:label) oc:opcode rt:register (rn:register) #:immediate n)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
