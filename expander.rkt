@@ -446,7 +446,8 @@
 
 (struct context (data location minl maxl jump-table branches-waiting linker-labels) #:mutable #:transparent)
 (struct target-label (immediate-encoder relative location) #:transparent)
-(define prog (context (make-vector 65536000 0) 0 0 0 (make-hash) (make-hash) (list)))
+;(define prog (context (make-vector 65536000 0) 0 0 0 (make-hash) (make-hash) (list)))
+(define prog (context (make-vector 1024 0) 0 0 0 (make-hash) (make-hash) (list)))
 
 (define (update-min v)
   (cond [(< v (context-minl prog)) (set-context-minl! prog v)]))
@@ -512,10 +513,15 @@
     (hash-set! h label (cons (target-label imm-encoder relative location) v))))
 
 (define (set-current-value v)
+  (when (>= (context-location prog) (vector-length (context-data prog)))
+    (displayln "program exceeded memory, extending by 1mb ...")
+    (let ([new-vector (make-vector (* 1024 1024))])
+      (set-context-data! prog (vector-append (context-data prog) new-vector))))
+
   (vector-set! (context-data prog) (context-location prog) v))
 
 (define (set-linker-resolved-label global-label location)
-  (displayln (format "label ~a loc ~a" global-label location))
+;  (displayln (format "label ~a loc ~a" global-label location))
   ; append label * loction to the linker-labels list
   (set-context-linker-labels!
    prog
@@ -573,11 +579,13 @@
     (if (list? e)
         (write-values e)
         (write-value e))))
+
 (define (write-value-16 e)
   (write-values
    (list
      (lo-byte e)
      (hi-byte e))))
+
 (define (write-value-32 e)
   (write-values
    (list
@@ -585,6 +593,7 @@
      (hi-byte e)
      (lo-byte2 e)
      (hi-byte2 e))))
+
 (define (write-value-64 e)
   (let ([msb (arithmetic-shift e -32)])
     (write-value-32 e)
@@ -608,7 +617,6 @@
 (define-syntax (resolve-global-label-address stx)
   (syntax-parse stx
     [(_ global-label:label)
-;     #:with label (symbol->string (syntax-e #'label))
      #'(begin
          (set-linker-resolved-label 'global-label (here))
          (set-location (+ 8 (context-location prog))))]))
@@ -936,7 +944,7 @@
     ))
 
 (define (reset-prog)
-  (set-context-data! prog (make-vector 65536000 0))
+  (set-context-data! prog (make-vector (* 1024 1024) 0)) ; start at 1 meg
   (set-context-location! prog 0)
   (set-context-minl! prog 0)
   (set-context-maxl! prog 0)
@@ -1142,7 +1150,9 @@
                                [string-index (hash-ref (obj-file-reverse-string-table current-obj) (symbol->string label))]
                                [actual-location (hash-ref symbol-lookup string-index)])
                      (begin
-                       (displayln (format "rewriting label ~a from ~a to ~a" label location actual-location))
+                       (displayln (format "rewriting label ~a from\n $~a to $~a" label
+                                          (~r location #:base 16 #:min-width 16 #:pad-string "0")
+                                          (~r actual-location #:base 16 #:min-width 16 #:pad-string "0")))
                        (rewrite location actual-location)
                        )))
                  

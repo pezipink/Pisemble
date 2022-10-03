@@ -72,7 +72,6 @@
 
 (let*
     ([map-bytes
-      
        (bytes->list (file->bytes "c:/repos/pisemble/wolf3d/wolfmap/maps.dat"))])
   (begin
     {
