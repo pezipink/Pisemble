@@ -44,8 +44,6 @@
 
 (aarch64 "textures.obj" [] {
 
-
-
 ; these are the textures used in the raycaster
 ; they are all 64*64 bitmaps of 4 byte pixels                            
 ; the program can work out the indexing 
@@ -64,6 +62,22 @@
     {
      :DATA-textures
      (write-values texture-bytes)
+    }))
+    
+})
+
+(aarch64 "maps.obj" [] {
+
+; decompresed map planes, 2 per level at 64*64*2 each (64*64*2*2 per map)
+
+(let*
+    ([map-bytes
+      
+       (bytes->list (file->bytes "c:/repos/pisemble/wolf3d/wolfmap/maps.dat"))])
+  (begin
+    {
+     :DATA-maps
+     (write-values map-bytes)
     }))
     
 })

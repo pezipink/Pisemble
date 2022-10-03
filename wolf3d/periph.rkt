@@ -83,31 +83,33 @@
      ; for this we need to set 00 in 2 places at CNTGRL_REG0
      ; but for simplicity we'll just splat the whole thing
      mov x1 @0
-     strh w1 (x0 @udn-offset)
+     strh w1 [x0 @udn-offset]
 
      ; now enable the mini-uart
      ldr  x0 AUXB:
      mov  x1 @1
-     strb w1 (x0 @aux-enables)  ; enable mini uart
+     strb w1 [x0 @aux-enables]  ; enable mini uart
      mov  x1 @0
-     strb w1 (x0 @aux-cntrl)    ; disable auto flow and rx/tx
-     strb w1 (x0 @aux-ier)      ; disable interrupts
+     strb w1 [x0 @aux-cntrl]    ; disable auto flow and rx/tx
+     strb w1 [x0 @aux-ier]      ; disable interrupts
      mov  x1 @3
-     strb w1 (x0 @aux-lcr)      ; 8 bit mode
+     strb w1 [x0 @aux-lcr]      ; 8 bit mode
      mov  x1 @0
-     strb w1 (x0 @aux-mcr)      ; set rts line high
+     strb w1 [x0 @aux-mcr]      ; set rts line high
      (cond
        [(equal? pi 'pi3) {mov x1 @270}]
        [(equal? pi 'pi4) {mov x1 @541}]
        [else (error "unsupported pi model")])
-     strh w1 (x0 @aux-baud)    
+     strh w1 [x0 @aux-baud]
      mov  x1 @3
-     strb w1 (x0 @aux-cntrl)      ; enable tx rx
+     strb w1 [x0 @aux-cntrl]      ; enable tx rx
 
 
      })
 
 ; send string over the mini UART
+; TODO we want proper string support in assembler and linker
+; rather than hardcoding them like some sort of savage
 (define (debug-str str newline?)
  {
   (PUSH x0)
@@ -145,7 +147,7 @@
           ldr  w3 (addr @aux-lsr)
           and  w3 w2 w3
           cbz  w3 wait-
-          strb w0 (addr @aux-io)})]))
+          strb w0 [addr @aux-io]})]))
 
 (provide init-uart debug-str create-send-char periph-addresses PERIPH-BASE)
                      

@@ -102,7 +102,6 @@
   (syntax-parse stx
     [(_)
      #'{
-;        (POP x8 x7 x6 x5 x4 x3 x2 x1 x0)
         ldp x0 x1   [sp @(* 16 0)]
         ldp x2 x3   [sp @(* 16 1)]
         ldp x4 x5   [sp @(* 16 2)]
@@ -122,6 +121,7 @@
         add sp sp @s-frame-size
         eret
         }]))
+
 (define-syntax (handle-invalid-entry stx)
   (syntax-parse stx
     [(_ type)
@@ -134,7 +134,7 @@
         }
      ]))
 
-  (define-syntax (wait stx)
+(define-syntax (wait stx)
   (syntax-parse stx
     [(_ value)
      #'{ldr x2 value
@@ -155,7 +155,7 @@
         ; restore r into x0 and send first char
         (POP x0)   
         bl  send-char:
-        ; shift and send the remainig 3 or 7 bytes
+        ; shift and send the remaining 3 or 7 bytes
         (for ([_ (in-range (if `r.is32 3 7))])
           { lsr x0 x0 @8
             bl send-char: })
@@ -176,40 +176,26 @@
      #'(begin (begin (debug-str name #f) (debug-reg reg)) ...)]))
 
 
-
-; the vector table is layed out 0x80 bytes
-; apart (
+; the vector table is layed out 0x80 bytes apart
 (define-syntax (ventry stx)
   (syntax-parse stx
     [(_ vector:label-targ)
      #'{
         /= $80        
         b vector
-        }]
+       }]
     [(_ vector:label-targ more ...+)
      #'{
         /= $80        
         b vector
         (ventry more ...)
-        }]))
+       }]))
 
 (define VCORE-MBOX (+ PERIPH-BASE $00B880))
 
-(aarch64 "kernel8.img" ["2dgfx.obj" "textures.obj"] {
+(aarch64 "kernel8.img" ["2dgfx.obj" "textures.obj" "maps.obj"] {
      width = 320
      height = 200      
-     set-offset = $1C
-     clr-offset = $28
-     udn-offset = $E4
-     aux-enables = $4
-     aux-io = $40
-     aux-ier = $44
-     aux-iir = $48
-     aux-lcr = $4c
-     aux-mcr = $50
-     aux-lsr = $54
-     aux-cntrl = $60
-     aux-baud = $68
 
      ;mailbox offsets
      mbox-read = $0
@@ -241,9 +227,8 @@
 
 :main
 
-   ;;     msr     cpacr_el1, x0	 // Enable FP/SIMD at EL1
-   movz x0 @$30 LSL @16 ; 3 << 20
-   (write-value-32 $d5181040)
+    ;;     msr     cpacr_el1, x0	 // Enable FP/SIMD at EL1
+    (write-value-32 $d5181040)
      
     ; get ready to switch from EL3 down to EL1
     ldr     x0 SCTLR-VALUE-MMU-DISABLED:
@@ -287,8 +272,7 @@
     ; we won't enable the interrupts just yet
     ldr x0 SMICS:
     mov x1 @0
-    str w1 (x0 @0)
-
+    str w1 [x0]
 
     ; now we are going to ask for a frame buffer
     (debug-str "value before:" #t)
@@ -300,7 +284,7 @@
 
     (debug-str "fb addr nefore" #t)
     adr x0 fb:
-    ldr w0 (x0 @0)
+    ldr w0 [x0]
     (debug-reg x0)
     adr x8 MBOX-MSG:
     bl send-vcore-msg:
@@ -379,7 +363,7 @@
      bl enable-irq:
 
      mov x1 @0
-     mov x28 @130
+     mov x28 @105  ; 130 for 2d pics, 105 for textures
      mov x27 @60
 
           mov x1 @84
@@ -398,37 +382,57 @@
   (POP x30)
   ret x30
 
+(define-syntax-parser zero-mem
+  [(_ base:register size:expr)
+   #'(letrec
+         ([aux
+           (λ (offset rem-size)
+             (cond
+               [(>= rem-size 8) (begin {str x0 (base @offset)} (aux (+ offset 8) (- rem-size 8)))]
+               [(>= rem-size 4) (begin {str w0 (base @offset)} (aux (+ offset 4) (- rem-size 4)))]
+               [(>= rem-size 2) (begin {strh w0 (base @offset)} (aux (+ offset 2) (- rem-size 2)))]
+               [(>= rem-size 1) (begin {strb w0 (base @offset)} (aux (+ offset 1) (- rem-size 1)))]
+               [(= rem-size 0) (void)]
+               [else (error (format "FAIL ~a ~a" offset rem-size))]))])
+       (begin
+         {mov x0 @0}
+         (aux 0 size)))])
+
+
 (asm-struct _voffset_msg
   ([total-size 4]     ; total buffer size bytes including headers
-   [request-code 4]  ; request / response code (0 = request)
+   [request-code 4]   ; request / response code (0 = request)
    ;begin tags
    [tag-id 4]
    [request-size 4]
    [tag-request-code 4]
-   [x-loc 4]
-   [y-loc 4]
+   [x-loc 4]         ; virtual x pos
+   [y-loc 4]         ; virtual y pos
    [end-tag 4]))
 
 (define-syntax-parser write-virtual-offset
   [(_ base:register y-loc:register)
-   #'{
-      (_voffset_msg/total-size-set (* 8 4) base) ;note this splats x0
-      (_voffset_msg/request-code-set 0 base)
+   #'{ ;note this trashes x0
+      (zero-mem base (_voffset_msg/sizeof))
+      (_voffset_msg/total-size-set (* 8 4) base)
       (_voffset_msg/tag-id-set $48009 base)
       (_voffset_msg/request-size-set 8 base)
-      (_voffset_msg/tag-request-code-set 0 base)
-      (_voffset_msg/x-loc-set 0 base)
       (_voffset_msg/y-loc-set y-loc base)
-      (_voffset_msg/end-tag-set 0 base)
      }])
 
+; virtual "page flip" here we tell the gpu to
+; display the off-screen portion of the video memory
+; that has been drawn to
+; pass y value in x3
 (subr page-flip ([ptr x16]) [x0 x1 x2 x16] {
-  ;pass y value in x3
-  adr ptr MBOX-VOFFSET-MSG:
-  (write-virtual-offset ptr x3)
-  adr x8 MBOX-VOFFSET-MSG:
+  ; reserve space on stack for v-offset message
+  sub sp sp @(_voffset_msg/sizeof)                                          
+  (write-virtual-offset sp x3)
+  mov x8 sp
   bl send-vcore-msg:
+  add sp sp @(_voffset_msg/sizeof)                                          
 })
+
 
 ; pass message address in x8
 (subr send-vcore-msg ()[x0 x1 x2 x3 x8]{
@@ -566,10 +570,12 @@ error_invalid_el0_32:
   ;; str w1 (x0 @0)
   ldr x0 ENABLE_IRQS_2:
   ldr x1 FAKE-ISR: ; SMI 
-  str w1 (x0 @0)
+  str w1 [x0]
 })
 
-
+; returns a pointer to the current "back buffer"
+; which is the area of video memory not currently
+; being displayed
 (subr get-back-buffer () [x1 x2] {
     ldr x0 VMEM:
     mov x1 x0
@@ -587,6 +593,7 @@ error_invalid_el0_32:
     mov x0 x1
 })
 
+; plots a single pixel 
 (subr plot
       ([vptr x0] ; base video memory
        [x x1]
@@ -599,20 +606,20 @@ error_invalid_el0_32:
     mul y y x4
     add vptr vptr x
     add vptr vptr y
-    str colour (vptr @0)
+    str colour [vptr]
     
-    })
+})
 
-;; (begin-for-syntax
-;;   (define labels (make-hash))
-;;   (define (gen-label name)
-;;     (if (hash-has-key? labels name)
-;;         (let ([val (hash-ref labels name)])
-;;           (hash-set! labels name (+ val 1))
-;;           (format "~a_~a" name (+ val 1)))
-;;         (begin
-;;           (hash-set! labels name 0)
-;;           (format "~a_~a" name 0)))))
+(begin-for-syntax
+  (define labels (make-hash))
+  (define (gen-label name)
+    (if (hash-has-key? labels name)
+        (let ([val (hash-ref labels name)])
+          (hash-set! labels name (+ val 1))
+          (format "~a_~a" name (+ val 1)))
+        (begin
+          (hash-set! labels name 0)
+          (format "~a_~a" name 0)))))
 
 ;; (define-syntax-parser ~=
 ;;   [(_ x:register y:register target:label-targ)
@@ -698,6 +705,83 @@ error_invalid_el0_32:
 ;;            b.ne start-target
 ;;           }))])
 
+
+(define-syntax-parser whilenz
+  [(_ test-register:register body)
+   (let ([loop-start (gen-label "whilenz-start")])
+     (with-syntax
+       ([start-label (string->symbol (format ":~a" loop-start))]
+        [start-target (string->symbol (format "~a-" loop-start))])
+        #'{
+           start-label body
+           cbnz test-register start-target
+           }))])
+
+(define-syntax-parser while-true
+  [(_ true-test body)
+   (let ([loop-start (gen-label "while-start")])
+     (with-syntax
+       ([start-label (string->symbol (format ":~a" loop-start))]
+        [start-target (string->symbol (format "~a-" loop-start))])
+        #'{
+           start-label body
+           true-test            
+           b.eq start-target
+           }))])
+(define-syntax-parser while-false
+  [(_ true-test body)
+   (let ([loop-start (gen-label "while-start")])
+     (with-syntax
+       ([start-label (string->symbol (format ":~a" loop-start))]
+        [start-target (string->symbol (format "~a-" loop-start))])
+        #'{
+           start-label body
+           true-test            
+           b.ne start-target
+          }))])
+
+; test routine that displays each texture on the screen
+; this relies on the delay and image number loop
+; from the gfx-update
+(subr render-tex
+      ([vptr x0]
+       [texnum x1][iptr x1]
+       [offset x3]
+       [x w4]
+       [y w5]
+       [data w6]
+       [screen-rowsize x8]
+       [temp x9])
+      [] {
+
+    ldr screen-rowsize ROW-SIZE:
+    ldr temp textures-address:
+    ; apply offset    
+    mov offset @$4000      ; texture size
+    mul iptr offset texnum ; size * index
+    add iptr temp iptr     ; start+offset
+
+    ; now we are ready to copy
+    mov y @64
+    ; equiv to whilenz
+    (while-false { cmp y xzr } {
+      mov x @64
+      (whilenz x {
+        ; copy 4 bytes from source to dest
+        ldr data [iptr] @4 
+        str data [vptr] @4 
+        sub x x @1
+       })
+      sub y y @1
+      ; move down a row in video memory
+      sub vptr vptr @(* 64 4)
+      add vptr vptr screen-rowsize
+    })
+})
+
+; test routine that displays each 2d picture on the screen
+; this relies on the delay and image number loop
+; from the gfx-update
 (subr render-pic
       ([vptr x0]
        [picnum x1][offset x1][iptr x1]
@@ -718,7 +802,7 @@ error_invalid_el0_32:
    ldr header 2d-image-header-address:
     lsl picnum picnum @3        ; index * 8
     add header picnum header    ; offset
-    ldr offset (header @0)      ; load struct
+    ldr offset [header]      ; load struct
    ; width/height is in lower 16 bits
     mov width w1
     mov height w1
@@ -765,18 +849,17 @@ error_invalid_el0_32:
     cbnz y y-loop-
 
           
-})
+    })
 
-; render
+
+
+; core render loop
+; clear screen then call other rendering functions
 (subr update-gfx  (
-                  [x x1]  ; current x and y pixels
-                  [y x2]
-                  [colour w3]
                   [temp x4] ; temporary / intermediates
                   [tptr x8]
                   [vptr x9] ; video memory pointer
                   [row-size x14]
-                  [fc x15] ; frame-count
                   ) [x0 x1 x2 x3 x4]
                     {
 
@@ -785,63 +868,16 @@ error_invalid_el0_32:
     cbnz x0 loop-
     bl get-back-buffer:
     mov vptr x0
-;;     mov colour @0
-;;     movk colour @$ff00 LSL @16
-;;     mov x @0
-;;     mov y @0
-;;     bl plot:
-
-;;     mov colour @$FF
-;;     movk colour @$ff00 LSL @16
-;;     mov x @319
-;;     mov y @0
-;;     bl plot:
-
-;;     mov colour @$FF00
-;;     movk colour @$ff00 LSL @16
-;;     mov x @0
-;;     mov y @199
-;;     bl plot:
-
-;;     ;; mov colour @0
-;;     movz colour @$FFFF LSL @16
-    
-;; ;    movk colour @$ff LSL @24
-;;     mov x @319
-;;     mov y @199
-;;     bl plot:
-
-    ; copy the title screen bytes directly 
-    ; there are 320*200*4 = 256,000 bytes
-    ; we can move them in 8 byte chunks (64 bits)
-    ; which is 32,000 operations
-    ; we can use offseting and further reduce this to
-    ; 8000 loops ($1F40)
-;;     adr tptr 2d-images: 
-;;     mov temp @$1F40
-;; :next    
-;;     ldr x3 (tptr @0)
-;;     str x3 (vptr @0)
-;;     ldr x3 (tptr @8)
-;;     str x3 (vptr @8)
-;;     ldr x3 (tptr @16)
-;;     str x3 (vptr @16)
-;;     ldr x3 (tptr @24)
-;;     str x3 (vptr @24)
-
-;;     add tptr tptr @32
-;;     add vptr vptr @32
-
-;;     sub temp temp @1
-;;     cbnz temp next-
 
     ; clear screen
-    
+
+    ; we do 8 pixels each iteration so
+    ; we need 320*200/8 = $1F40 iterations
     mov temp @$1F40
     mov x3 @0
 
 :next
-    str x3 (vptr @0)
+    str x3 [vptr]
     str x3 (vptr @8)
     str x3 (vptr @16)
     str x3 (vptr @24)
@@ -851,13 +887,18 @@ error_invalid_el0_32:
     cbnz temp next-
     mov vptr x0
 
-    
+    ; x27 holds a delay
+    ; this should be in memory
+    ; since we never even push these!
     sub x27 x27 @1
     cbnz x27 skip+
     mov x27 @10
+    ; x28 holds next picture to display
+    ; also can easily be trashed!
     sub x28 x28 @1
+    (debug-reg x28)
     cbnz x28 skip+
-    mov x28 @130
+    mov x28 @105  ; 130 for 2d pics, 105 for textures
     
 :skip    
     mov x0 vptr
@@ -865,18 +906,23 @@ error_invalid_el0_32:
 
 ;    mov x1 @84
     
-    bl render-pic:
+    ;bl render-pic:  ; render 2d pics
+    bl render-tex:   ; render 2d textures
     ;signal render has finished
     mov temp @1
     adr x0 finished-rendering:
-    str temp (w0 @0)
+    str temp [w0]
 
 
     b loop-
    })
 
 
-
+; interrupt handler
+; at the moment we are expecting only the
+; SMICS interrupt which is the VSYNC
+; here we only flip the pge if the renderer
+; has actualy finished
 (subr handle-irq () [] {
 ;(debug-str "handled interrupt" #t)
 ;; ldr x0 TIMER_CS:
@@ -884,7 +930,7 @@ error_invalid_el0_32:
 ;; str w1 (x0 @0)
   ldr x0 SMICS:  ; ack vsync
   mov x1 @0
-  str w1 (x0 @0)
+  str w1 [x0]
 
   ; only flip if render finished
   ldr w0 finished-rendering:
@@ -898,13 +944,13 @@ error_invalid_el0_32:
   mov x3 @0
 :done
   adr x1 CURRENT-PAGE:
-  str x3 (x1 @0)
+  str x3 [x1]
   
   bl page-flip:
   ;bl update-gfx:
   adr x1 finished-rendering:
   mov x2 @0
-  str w2 (x1 @0)  
+  str w2 [x1]
 
   
 :quit})
@@ -913,16 +959,23 @@ error_invalid_el0_32:
   ; the following values are used for loading 64 bit addresses/values via LDR(literal)
   ; and they must be 64 bit aliged otherwise the CPU faults!
 /= 8
+  ; resolve-global-label-address will tell the linker to write the absolute
+  ; address of the exported labels here, post-link.  These might be quite far away and
+  ; as such out of range of the adr instruction and some jumps.
+  ; this lets us load them with ldr.
   :2d-image-header-address (resolve-global-label-address :DATA-2d-image-header)
   :2d-images-address (resolve-global-label-address :DATA-2d-images)
   :textures-address (resolve-global-label-address :DATA-textures)
+  :maps-address (resolve-global-label-address :DATA-maps)
+  ; end linker
+  ; ///
   (periph-addresses)
   :dELAY (write-value-64 $FFFFF)
   :dELAY2 (write-value-64 200000)
   :VC_MBOX (write-value-64 VCORE-MBOX)
   :TEST (write-value-64 $123456789ABCDEF)
-:START (write-value-64 $80000)
-;:START (write-value-64 $400000)
+:START (write-value-64 $800000) ; stack location
+
 :CONVERT (write-value-64 $3FFFFFFF)
 :HCR-VALUE (write-value-64 HCR_VALUE)
 :SCTLR-VALUE-MMU-DISABLED (write-value-64 SCTLR_VALUE_MMU_DISABLED2)
@@ -941,7 +994,7 @@ error_invalid_el0_32:
 :finished-rendering (write-value-64 0)
 :frame-count (write-value-64 0)
 
-; to communicate with the video core gpu we need an address that
+  ; to communicate with the video core gpu we need an address that
   ; is 16-byte algined - the lower 4 bits are not set. these are then
   ; used to specify the channel
   /= 16
@@ -997,20 +1050,20 @@ error_invalid_el0_32:
 
 
     (write-value-32 0) ;end tag
-  /= 16
-  :MBOX-VOFFSET-MSG
-    (write-value-32 (* 8 4)) ; total buffer size bytes including headers
-    (write-value-32 0) ; request / response code (0 = request)
-    ;begin tags
-    ; set virtoff
-      (write-value-32 $48009)
-      (write-value-32 8) ; value buffer size
- :voffset-req
-(write-value-32 0) ; 0 = request
-      (write-value-32 0) ; x
-   :voffset-y
-      (write-value-32 0); y
-    (write-value-32 0) ;end tag
+;;   /= 16
+;;   :MBOX-VOFFSET-MSG
+;;     (write-value-32 (* 8 4)) ; total buffer size bytes including headers
+;;     (write-value-32 0) ; request / response code (0 = request)
+;;     ;begin tags
+;;     ; set virtoff
+;;       (write-value-32 $48009)
+;;       (write-value-32 8) ; value buffer size
+;;  :voffset-req
+;; (write-value-32 0) ; 0 = request
+;;       (write-value-32 0) ; x
+;;    :voffset-y
+;;       (write-value-32 0); y
+;;     (write-value-32 0) ;end tag
 
 
 
