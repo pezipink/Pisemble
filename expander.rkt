@@ -229,6 +229,20 @@
         (let ([imm (arithmetic-shift (bitwise-and #b111111111111 imm12) 10)])
           (bitwise-ior-n imm bin))])
      ]
+
+    ['imm12-rn
+     (match-lambda
+       [(list bin rn)
+        (let ([rn-shifted (arithmetic-shift rn 5)])
+          (bitwise-ior-n rn-shifted bin))])
+     (match-lambda
+       [(list bin imm12)
+        (when (>= imm12 (arithmetic-shift 1 12))
+          (error (format "error: immediate value ~x is larger than 12 bits" imm12)))
+        (let ([imm (arithmetic-shift (bitwise-and #b111111111111 imm12) 10)])
+          (bitwise-ior-n imm bin))])
+     ]
+
     ['imm9-rn-rd
      (match-lambda
        [(list bin rt rn)
@@ -334,9 +348,16 @@
 
 
 (define opcode-metadata
-  (let ([b31 #b01111111111111111111111111111111]
-        [b30 #b10111111111111111111111111111111]
-        [lsl-imm-special #b01111111101111111111111111111111];here we splat 'N' and sf
+  (let ([b31             #b01111111111111111111111111111111]
+        [b30             #b10111111111111111111111111111111]
+        [lsl-imm-special #b01111111100111110111111111111111];here we splat 'N', sf, and the upper bits of immr and imms
+        [lsl-in-range
+         (λ (imm is32?)
+           (cond
+            [(and is32? (or (< imm 1) (> imm 31))) (error (format "immediate arguments to 32bit lsl must be between 1 and 31, not ~a" imm))]
+            [(and (not is32?) (or (< imm 1) (> imm 63))) (error (format "immediate arguments to 64bit lsl must be between 1 and 63, not ~a" imm))]
+            [else imm]))]
+            
         [lsr-imm-special #b01111111101111110111111111111111];here we splat 'N', sf and the upper bit of imms
         [shift-2-or-3
          (λ (imm is32?)
@@ -359,7 +380,7 @@
    (['add 'reg-reg-imm   'imm12-rn-rd                        #b10010001000000000000000000000000 b31 #f]
     ['add 'reg-reg-reg   'rm-rn-rd                           #b10001011000000000000000000000000 b31 #f]
     ['adr 'reg-lbl       'immlo-immhi-rd                     #b00010000000000000000000000000000 #f #f]
-    ['and 'reg-reg-reg   'rm-rn-rd                           #b10001010000000000000000000000000 b31 #f]    
+    ['and 'reg-reg-reg   'rm-rn-rd                           #b10001010000000000000000000000000 b31 #f ]
     ['b   'lbl           'imm26                              #b00010100000000000000000000000000 #f #f]
 
     ['b.eq 'lbl          'imm19                              #b01010100000000000000000000000000 #f #f] ; equal Z = 1
@@ -383,6 +404,7 @@
     ['cbz 'reg-lbl       'imm19-rt                           #b10110100000000000000000000000000 b31 #f]
     ['cbnz 'reg-lbl      'imm19-rt                           #b10110101000000000000000000000000 b31 #f]
     ['cmp  'reg-reg      'rm-rn                              #b11101011000000000000000000011111 b31 #f]
+    ['cmp  'reg-imm      'imm12-rn                           #b11110001000000000000000000011111 b31 #f]
     ['csel 'reg-reg-reg-cond 'rm-cond-rn-rd                  #b10011010100000000000000000000000 b31 #f]
     ['eor 'reg-reg-reg   'rm-rn-rd                           #b11001010000000000000000000000000 b31 #f]
     ['eret 'none         'none                               #b11010110100111110000001111100000 #f #f ]
@@ -401,7 +423,7 @@
     ['ldrb 'reg_reg_imm  'imm9-rn-rd                         #b00111000010000000000010000000000 b30 #f]
     ['ldrb 'reg_reg-imm_excla  'imm9-rn-rd                   #b00111000010000000000110000000000 #f #f]
     ['ldrb 'reg_reg-imm_ 'imm12-rn-rd                        #b00111001010000000000000000000000 #f  #f]
-    ['lsl 'reg-reg-imm   'immr-imms-rn-rd                    #b11010011010000000000000000000000 lsl-imm-special #f]
+    ['lsl 'reg-reg-imm   'immr-imms-rn-rd                    #b11010011010000000000000000000000 lsl-imm-special lsl-in-range]
     ['lsr 'reg-reg-imm   'immr6-rn-rd                        #b11010011010000001111110000000000 lsr-imm-special #f]
 
     ['mov 'reg-reg       'rm-rd                              #b10101010000000000000001111100000 b31 #f]
@@ -446,8 +468,7 @@
 
 (struct context (data location minl maxl jump-table branches-waiting linker-labels) #:mutable #:transparent)
 (struct target-label (immediate-encoder relative location) #:transparent)
-;(define prog (context (make-vector 65536000 0) 0 0 0 (make-hash) (make-hash) (list)))
-(define prog (context (make-vector 1024 0) 0 0 0 (make-hash) (make-hash) (list)))
+(define prog (context (make-vector (* 1024 1024) 0) 0 0 0 (make-hash) (make-hash) (list)))
 
 (define (update-min v)
   (cond [(< v (context-minl prog)) (set-context-minl! prog v)]))
@@ -599,6 +620,10 @@
     (write-value-32 e)
     (write-value-32 msb)))
 
+(define (write-ascii str)
+  (for ([c str])
+    (write-value (lo-byte (char->integer c)))))
+
 (begin-for-syntax
   (define-syntax-class label-targ
     (pattern x:id #:when
@@ -657,7 +682,8 @@
         [with-data (data-encoder (cons raw data-args))]
         [with-addr (final-address-encoder (cons with-data immediate-address-args))]
 
-        [final (if (and 32bit-mask is-32bit?) (bitwise-and with-addr 32bit-mask) with-addr)])
+        [final
+         (if (and 32bit-mask is-32bit?) (bitwise-and with-addr 32bit-mask) with-addr)])
     ; for each instruction we encode it using the data and address encoder
     ; then we process the 32 bit mask if this is in 32 bit mode
     ; later the address encoder might get called again with a label target

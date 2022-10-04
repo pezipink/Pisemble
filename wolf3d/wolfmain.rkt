@@ -281,7 +281,12 @@
     ;    add x0 x0 @24
     ldrb w0 (x0 @0)
     (debug-reg w0)
-
+    
+    ldr x0 textures-address:
+    mov x0 @0
+    mov x1 @16
+    bl memory-dump:
+    
     (debug-str "fb addr nefore" #t)
     adr x0 fb:
     ldr w0 [x0]
@@ -381,6 +386,148 @@
   (dump-all-regs)
   (POP x30)
   ret x30
+
+(define-syntax-parser nibble->hex
+  [(_ input:register )
+   #'{ ; with an additional register we can remove this
+      ; branch by using csel - debug code though so
+      ; doesn't matter
+      cmp input @10
+      b.ge hex+
+      add input input @48     ; add 48 (0-9)
+      b done+
+  :hex
+      add input input @55     ; add 65 (A-F)
+      :done}])
+
+(define-syntax-parser bound-ascii
+  [(_ input:register )
+   #'{
+     cmp input @$20
+     b.ge done+
+     mov input @$2E  ;; '.'
+    :done}])
+
+(define dump-template "0000000000000000 : 00 00 00 00 | 00 00 00 00 | 00 00 00 00 | 00 00 00 00 | 0000000000000000")
+(subr memory-dump () [x0 x1 x2 x3 x4 x5 x6 x7 x8] {
+  ; arguments 
+  ; x0 will be the start address
+  ; x1 will be the amount of rows to send (* 4 32 bits + ascii)                                 
+  ; //////
+  ; we are going to write                                            
+  ; 00000000000012FF : FF FF FF FF | FF FF FF FF | FF FF FF FF | FF FF FF FF | asciiasciiascii.
+  ; now we can skip ahead four in the output and read the first 32 bit value
+
+
+  (define (write-byte) {
+    lsr x4 x3 @4      ; top 4 bits first                    
+    (nibble->hex x4)  ; convert to ascii hex
+    strb w4 [x6] @1   ; modify string with result
+    and x4 x3 x5      ; bottom 4 bits
+    (nibble->hex x4)  ; convert to ascii hex
+    strb w4 [x6] @1   ; modify string with result
+    })
+
+  (define (write-byte-raw) {
+    (bound-ascii w3)
+    strb w3 [x6] @1   ; modify string with result
+  })
+                                              
+  template-len = (string-length dump-template)
+  mov x8 x1 ; x8 holds row count down
+  (whilenz x8 {
+    ; first part is to overwrite the address with the requested address
+    adr x6 memory-dump-template:
+    mov x3 x0           ; address to write
+    mov x2 @16          ; loop counter (+1)
+    mov x5 @$F          ; because we don't support and x x imm
+    (whilenz x2 {
+      lsr x4 x3 @60     ; shift to byte
+      and x4 x4 x5      ; mask the 4 bits
+      (nibble->hex x4)  ; convert to ascii hex
+      strb w4 [x6] @1   ; modify string with result
+      lsl x3 x3 @4      ; shift in next nibble
+      sub x2 x2 @1      ; 
+    })             
+
+
+    add x6 x6 @3 ; spacer
+
+    mov x7 @4
+    (whilenz x7 {
+      ldrb w3 [x0] @1
+      (write-byte)
+      add x6 x6 @1
+      
+      ldrb w3 [x0] @1
+      (write-byte)
+      add x6 x6 @1
+      
+      ldrb w3 [x0] @1
+      (write-byte)
+      add x6 x6 @1
+      
+      ldrb w3 [x0] @1
+      (write-byte)
+      add x6 x6 @3
+
+      sub x7 x7 @1
+    })
+
+    ; now for the ascii version
+    sub x0 x0 @16
+    mov x7 @16
+
+    (whilenz x7 {
+      ldrb w3 [x0] @1
+      (write-byte-raw)    
+      sub x7 x7 @1
+    })
+    
+    adr x1 memory-dump-template:
+    mov x2 @template-len
+    bl send-string:
+    sub x8 x8 @1
+  })
+
+})
+:memory-dump-template (write-ascii dump-template)                  
+
+/= 4
+(subr send-string
+      ([address x1]
+       [len x2]) [x0] {
+  ; initiate string send
+  mov w0 @1
+  bl send-char:
+
+  (whilenz len {
+    ldrb x0 [address] @1
+    bl send-char:
+    sub len len @1
+  })
+  mov w0 @$A ; line feed
+  bl  send-char:
+  ;; mov w0 @$D ; cr
+  ;; bl  send-char:
+
+  ; signal string end
+  mov w0 @0
+  bl send-char:
+})
+  
+; x0 = address
+; x1 = count
+; this trashes registers .. so push first!
+;; (subr :dump-mem-64
+;;       ([x1 address]
+;;        [x2 remaining]) [] {
+;;   ; first print the address like so  "$00000000 : "
+;;   mov x0 @(#/'$)
+;;   bl send-char                               
+;; })                       
+
+
 
 (define-syntax-parser zero-mem
   [(_ base:register size:expr)
@@ -896,7 +1043,7 @@ error_invalid_el0_32:
     ; x28 holds next picture to display
     ; also can easily be trashed!
     sub x28 x28 @1
-    (debug-reg x28)
+
     cbnz x28 skip+
     mov x28 @105  ; 130 for 2d pics, 105 for textures
     
