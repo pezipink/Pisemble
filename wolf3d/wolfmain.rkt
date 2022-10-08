@@ -7,7 +7,7 @@
 (require racket/string)
 (require racket/match)
 (require threading)
-(require "periph.rkt" "stack.rkt" "struct.rkt")
+(require "periph.rkt" "stack.rkt" "struct.rkt" "expr.rkt")
 
 (define s-frame-size 256) ; size of all saved registers
 (define SYNC_INVALID_EL1t 0)
@@ -449,13 +449,13 @@
                                               
   template-len = (string-length dump-template)
   mov x8 x1 ; x8 holds row count down
-  (whilenz x8 {
+  (/whilenz x8 {
     ; first part is to overwrite the address with the requested address
     adr x6 memory-dump-template:
     mov x3 x0           ; address to write
     mov x2 @16          ; loop counter (+1)
     mov x5 @$F          ; because we don't support and x x imm
-    (whilenz x2 {
+    (/whilenz x2 {
       lsr x4 x3 @60     ; shift to byte
       and x4 x4 x5      ; mask the 4 bits
       (nibble->hex x4)  ; convert to ascii hex
@@ -468,7 +468,7 @@
     add x6 x6 @3 ; spacer
 
     mov x7 @4
-    (whilenz x7 {
+    (/whilenz x7 {
       ldrb w3 [x0] @1
       (write-byte)
       add x6 x6 @1
@@ -492,7 +492,7 @@
     sub x0 x0 @16
     mov x7 @16
 
-    (whilenz x7 {
+    (/whilenz x7 {
       ldrb w3 [x0] @1
       (write-byte-raw)    
       sub x7 x7 @1
@@ -529,7 +529,7 @@
         bl send-char: })
     lsr instruction-count instruction-count @1 ; we do 64 bits at a time
     ; send instructions
-    (whilenz instruction-count {
+    (/whilenz instruction-count {
       ldr x0 [x1] @8
       bl send-char:
       (for ([_ (in-range 7)])
@@ -549,7 +549,7 @@
   mov w0 @1
   bl send-char:
 
-  (whilenz len {
+  (/whilenz len {
     ldrb x0 [address] @1
     bl send-char:
     sub len len @1
@@ -808,35 +808,8 @@ error_invalid_el0_32:
     
 })
 
-(begin-for-syntax
-  (define labels (make-hash))
-  (define (format-label label)
-    (string->symbol (format ":~a"  label)))
-  (define (format-target label type)
-    (case type
-      ['+     (string->symbol (format "~a+" label))]
-      ['-     (string->symbol (format "~a-" label))]
-      [else (error (format "bad label type ~a" type))]))
-             
-  (define (gen-label name)
-    (if (hash-has-key? labels name)
-        (let ([val (hash-ref labels name)])
-          (hash-set! labels name (+ val 1))
-          (format "~a_~a" name (+ val 1)))
-        (begin
-          (hash-set! labels name 0)
-          (format "~a_~a" name 0)))))
 
-(define-syntax-parser whilenz
-  [(_ test-register:register body)
-   (let ([loop-start (gen-label "whilenz-start")])
-     (with-syntax
-       ([start-label (format-label loop-start)]
-        [start-target (format-target loop-start '-)])
-        #'{
-           start-label body
-           cbnz test-register start-target
-           }))])
+
 
 
 ; test routine that displays each texture on the screen
@@ -863,9 +836,9 @@ error_invalid_el0_32:
     ; now we are ready to copy
     mov y @64
     ; equiv to whilenz
-    (whilenz y {
+    (/whilenz y {
       mov x @64
-      (whilenz x {
+      (/whilenz x {
         ; copy 4 bytes from source to dest
         ldr data [iptr] @4 
         str data [vptr] @4 
@@ -1055,213 +1028,6 @@ error_invalid_el0_32:
 :quit})
 
 
-(define-syntax (compile-condition stx)
-  (syntax-parse stx #:datum-literals (/and /or)
-  [(_ (lhs:register cond:condition rhs:register) branch-target:label-targ)
-   #'{cmp lhs rhs
-      cond.branch-opcode branch-target}]
-  [(_ (lhs:register cond:condition #:immediate n) branch-target:label-targ)
-   #'{cmp lhs @n
-      cond.branch-opcode branch-target}]
-
-  [(_ (/and cases ...) then-target:label-targ)
-   ; this has come from an OR since we are in non-inverse.
-   ; the target passed is the success case for the parent OR
-   ; here then we want to go to that label if all of the ANDs
-   ; mathc, or short circuit to a new label after these ANDs if any fail
-   (let ([else-start (gen-label "else-start")])
-     (with-syntax
-       ([else-label (format-label else-start)]
-        [else-target (format-target else-start '+)])
-        #'{
-           (compile-inverse-condition cases else-target) ...
-           b then-target
-           else-label 
-           }))]
-   ;  #'(/if-and (cases ...) then-target)]
-  ))
-
-(define-syntax (compile-inverse-condition stx)
-  (syntax-parse stx #:datum-literals (/and /or)
-  [(_ (lhs:register cond:condition rhs:register) branch-target:label-targ)
-   #'{cmp lhs rhs
-      cond.branch-inverse-opcode branch-target}]
-  [(_ (lhs:register cond:condition #:immediate n) branch-target:label-targ)
-   #'{cmp lhs @n
-      cond.branch-inverse-opcode branch-target}]
-
-  [(_ (/or cases ...) else-target:label-targ)
-   ; this has come from an AND since we are in inverse.
-   ; the target passed is the fail case for the parent AND
-   ; here then we want to go to that label if none of the ORs
-   ; mathc, or short circuit to a new label after these ORs if any match
-   (let ([then-start (gen-label "then-start")])
-     (with-syntax
-       ([then-label (format-label then-start)]
-        [then-target (format-target then-start '+)])
-        #'{
-           (compile-condition cases then-target) ...
-           b else-target
-           then-label 
-           }))
-   
-   ;#'(/if-or (cases ...) else-target)
-
-   ]
-
-  ))
-(define-syntax-parser /when-or
-  [(_ (conditions ...) then-body) 
-   (let ([then-start (gen-label "then-start")]
-         [if-end (gen-label "if-end")]         )
-     (with-syntax
-       ([then-label (format-label then-start)]
-        [then-target (format-target then-start '+)]
-        [end-label (format-label if-end)]
-        [end-target (format-target if-end '+)])
-        #'{
-           (compile-condition conditions then-target) ...
-           b end-target
-           then-label then-body
-           end-label
-           }))])
-
-(define-syntax-parser /when-and
-  [(_ (conditions ...) then-body) 
-   (let (
-         [if-end (gen-label "if-end")])
-     (with-syntax
-       (
-        [end-label (format-label if-end)]
-        [end-target (format-target if-end '+)])
-        #'{
-           (compile-inverse-condition conditions end-target) ...
-           then-body
-           end-label
-           }))])
-
-(define-syntax-parser /if-and
-  [(_ (conditions ...) then-body else-body) ; parent is an and
-   (let (
-         [else-start (gen-label "else-start")]
-         [if-end (gen-label "if-end")])
-     (with-syntax
-       (
-        [else-label (format-label else-start)]
-        [else-target (format-target else-start '+)]
-        [end-label (format-label if-end)]
-        [end-target (format-target if-end '+)])
-        #'{
-           (compile-inverse-condition conditions else-target) ...
-           then-body
-           b end-target
-           else-label else-body
-           end-label
-           }))]
-
-  )
-
-(define-syntax-parser /if-or
-  [(_ (conditions ...) then-body else-body) 
-   (let ([then-start (gen-label "then-start")]
-         [if-end (gen-label "if-end")]         )
-     (with-syntax
-       ([then-label (format-label then-start)]
-        [then-target (format-target then-start '+)]
-        [end-label (format-label if-end)]
-        [end-target (format-target if-end '+)])
-        #'{
-           (compile-condition conditions then-target) ...
-           else-body           
-           b end-target
-           then-label then-body
-           end-label
-           }))]
-  )
-
-(define-syntax-parser /if #:datum-literals (/and /or)
-  [(_ (/and conditions ...) then-expr:expr else-expr:expr)
-   #'(/if-and
-      (conditions ...)
-      then-expr
-      else-expr
-     )]
-
-  [(_ (/or conditions ...) then-expr:expr else-expr:expr)
-   #'(/if-or
-      (conditions ...)
-      then-expr
-      else-expr
-      )]
-  [(_ condition:expr then-body:expr else-body:expr)
-   (let ([then-start (gen-label "then-start")]
-         [else-start (gen-label "else-start")]
-         [if-end (gen-label "if-end")])
-     (with-syntax
-       ([then-label (string->symbol (format ":~a" then-start))]
-        [then-target (string->symbol (format "~a+" then-start))]
-        [else-label (format-label else-start)]
-        [else-target (format-target else-start '+)]
-        [end-label (string->symbol (format ":~a" if-end))]
-        [end-target (string->symbol (format "~a+" if-end))])
-        #'{
-           (compile-condition condition then-target)
-           else-label  else-body
-           b end-target
-           then-label then-body
-           end-label
-           }))])
-
-(define-syntax-parser /when #:datum-literals (/and /or)
-  [(_ (/and conditions ...) then-expr:expr)
-   #'(/when-and
-      (conditions ...)
-      then-expr
-     )]
-
-  [(_ (/or conditions ...) then-expr:expr)
-   #'(/when-or
-      (conditions ...)
-      then-expr
-      )]
-  [(_ condition:expr then-body:expr)
-   (let ([then-start (gen-label "then-start")]
-         [if-end (gen-label "if-end")])
-     (with-syntax
-       ([then-label (string->symbol (format ":~a" then-start))]
-        [then-target (string->symbol (format "~a+" then-start))]
-        [end-label (string->symbol (format ":~a" if-end))]
-        [end-target (string->symbol (format "~a+" if-end))])
-        #'{
-           (compile-condition condition then-target)
-           b end-target
-           then-label then-body
-           end-label
-          }))])
-
-  
-
-
-   
-(define-syntax-parser /for ; note this won't work for a loop that runs 0 times
-  [(_ initializer:expr condition:expr update:expr body:expr)
-   (let ([loop-start (gen-label "for-start")]
-         [loop-end (gen-label "for-end")])
-     (with-syntax
-       ([start-label (format-label loop-start)]
-        [start-target (format-target loop-start '-)]
-        [end-label (format-label loop-end)]
-        [end-target (format-target loop-end '+)]
-        )
-        #'{initializer
-           start-label
-           body
-           update
-           (/when condition {b start-target})
-;           (compile-condition condition start-target end-target)
-           end-label
-           }))])
-
 ;; (define-syntax-parser /when
 ;;   [(_ condition:expr body:expr)
 ;;    (let ([true-start (gen-label "when-true")]
@@ -1358,20 +1124,10 @@ error_invalid_el0_32:
   ; x is the row and y is the offset [x][y]
 
   nop
-  ;; (/if2 (/and (tile eq @5) (/or (x gt @10) (y gt @10)) (offset ne @10))
-  ;;      {mov x1 @1}
-  ;;      {mov x1 @0})
 
-  ;; (/if  (/or (x gt @10)
-  ;;             (/and (tile eq @5) (offset eq @42))
-  ;;             (y gt @10) )
-  ;;      {mov x1 @1}
-  ;;      {mov x1 @0})
   
-  ;; (/when (/and (x gt @10) (y gt @10)) {
-  ;;   adr lvl-ptr tilemap:
-  ;; })    
-  
+
+
   (/for { mov y @0 } (y lt @MAP_HEIGHT) (inc y) {
     (/for { mov x @0 } (x lt @MAP_WIDTH) (inc x) {
       ldrh tile [raw-ptr] @2
