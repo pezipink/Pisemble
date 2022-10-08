@@ -1125,9 +1125,6 @@ error_invalid_el0_32:
 
   nop
 
-  
-
-
   (/for { mov y @0 } (y lt @MAP_HEIGHT) (inc y) {
     (/for { mov x @0 } (x lt @MAP_WIDTH) (inc x) {
       ldrh tile [raw-ptr] @2
