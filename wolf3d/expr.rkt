@@ -22,7 +22,7 @@
           (hash-set! labels name 0)
           (format "~a_~a" name 0)))))
 
-(define-syntax-parser compile-condition #:datum-literals (/and /or)
+(define-syntax-parser compile-condition #:datum-literals (/and)
   [(_ (lhs:register cond:condition rhs:register) branch-target:label-targ)
    #'{cmp lhs rhs
       cond.branch-opcode branch-target}]
@@ -42,10 +42,10 @@
         #'{
            (compile-inverse-condition cases else-target) ...
            b then-target
-           else-label 
+         else-label 
            }))])
 
-(define-syntax-parser compile-inverse-condition #:datum-literals (/and /or)
+(define-syntax-parser compile-inverse-condition #:datum-literals (/or)
   [(_ (lhs:register cond:condition rhs:register) branch-target:label-targ)
    #'{cmp lhs rhs
       cond.branch-inverse-opcode branch-target}]
@@ -66,7 +66,7 @@
         #'{
            (compile-condition cases then-target) ...
            b else-target
-           then-label 
+         then-label 
            }))])
 
 (define-syntax-parser /when-or
@@ -81,8 +81,9 @@
         #'{
            (compile-condition conditions then-target) ...
            b end-target
-           then-label then-body
-           end-label
+         then-label
+           then-body
+         end-label
            }))])
 
 (define-syntax-parser /when-and
@@ -94,7 +95,7 @@
         #'{
            (compile-inverse-condition conditions end-target) ...
            then-body
-           end-label
+         end-label
            }))])
 
 (define-syntax-parser /if-and
@@ -112,8 +113,9 @@
            (compile-inverse-condition conditions else-target) ...
            then-body
            b end-target
-           else-label else-body
-           end-label
+         else-label
+           else-body
+         end-label
            }))])
 
 (define-syntax-parser /if-or
@@ -129,8 +131,9 @@
            (compile-condition conditions then-target) ...
            else-body           
            b end-target
-           then-label then-body
-           end-label
+         then-label
+           then-body
+         end-label
            }))])
 
 (define-syntax-parser /if #:datum-literals (/and /or)
@@ -147,24 +150,26 @@
       then-expr
       else-expr
       )]
-  
+  ; single condition
   [(_ condition:expr then-body:expr else-body:expr)
    (let ([then-start (gen-label "then-start")]
          [else-start (gen-label "else-start")]
          [if-end (gen-label "if-end")])
      (with-syntax
-       ([then-label (string->symbol (format ":~a" then-start))]
-        [then-target (string->symbol (format "~a+" then-start))]
+       ([then-label (format-label then-start)]
+        [then-target (format-target then-start '+)]
         [else-label (format-label else-start)]
         [else-target (format-target else-start '+)]
-        [end-label (string->symbol (format ":~a" if-end))]
-        [end-target (string->symbol (format "~a+" if-end))])
+        [end-label (format-label if-end)]
+        [end-target (format-label if-end '+)])
         #'{
            (compile-condition condition then-target)
-           else-label  else-body
+         else-label
+           else-body
            b end-target
-           then-label then-body
-           end-label
+         then-label
+           then-body
+         end-label
            }))])
 
 (define-syntax-parser /when #:datum-literals (/and /or)
@@ -179,14 +184,16 @@
       (conditions ...)
       then-expr
       )]
+
+  ;single condition
   [(_ condition:expr then-body:expr)
    (let ([then-start (gen-label "then-start")]
          [if-end (gen-label "if-end")])
      (with-syntax
-       ([then-label (string->symbol (format ":~a" then-start))]
-        [then-target (string->symbol (format "~a+" then-start))]
-        [end-label (string->symbol (format ":~a" if-end))]
-        [end-target (string->symbol (format "~a+" if-end))])
+       ([then-label (format-label then-start)]
+        [then-target (format-target then-start '+)]
+        [end-label (format-label if-end)]
+        [end-target (format-target if-end '+)])
         #'{
            (compile-condition condition then-target)
            b end-target
@@ -222,11 +229,11 @@
         [end-target (format-target loop-end '+)]
         )
         #'{initializer
-           start-label
+         start-label
            body
            update
            (/when condition {b start-target})
-           end-label
+         end-label
            }))])
 
 (define-syntax-parser /whilenz
@@ -247,7 +254,8 @@
        ([start-label (format-label loop-start)]
         [start-target (format-target loop-start '-)])
         #'{
-           start-label body
+         start-label
+           body
            cbz test-register start-target
            }))])
 
@@ -258,6 +266,7 @@
        ([start-label (format-label loop-start)]
         [start-target (format-target loop-start '-)])
         #'{
-           start-label body
+         start-label
+           body
            (/when condition {b start-label})
           }))])
