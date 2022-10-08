@@ -624,6 +624,10 @@
   (for ([c str])
     (write-value (lo-byte (char->integer c)))))
 
+(define (reserve byte-count)
+  (for ([x (in-range byte-count)])
+    (write-value (lo-byte 0))))
+
 (begin-for-syntax
   (define-syntax-class label-targ
     (pattern x:id #:when
@@ -724,21 +728,67 @@
   (define-syntax-class condition
     #:description "condition"
     #:datum-literals (eq ne cs cc mi pl vs vc hi ls ge lt gt le al)
-    (pattern eq #:with condnum #b0000) ; equal Z = 1
-    (pattern ne #:with condnum #b0001) ; not equal, Z = 0
-    (pattern cs #:with condnum #b0010) ; Carry set, C = 1
-    (pattern cc #:with condnum #b0011) ; Carry clear, C = 0    
-    (pattern mi #:with condnum #b0100) ; Minus, neg ; N = 1
-    (pattern pl #:with condnum #b0101) ; Positive or zero ; N = 0
-    (pattern vs #:with condnum #b0110) ; Overflow  ; V = 1
-    (pattern vc #:with condnum #b0111) ; No overfolow, V = 0
-    (pattern hi #:with condnum #b1000) ; Unsigned higher, C = 1 && z = 0
-    (pattern ls #:with condnum #b1001) ; Unsigned lower or same !(C=1&&z=0)
-    (pattern ge #:with condnum #b1010) ; Signed greater eq, N = V
-    (pattern lt #:with condnum #b1011) ; Signed le, N! = V   
-    (pattern gt #:with condnum #b1100) ; Signed gt, Z = 0 && N = V
-    (pattern le #:with condnum #b1101) ; Signed le or eq, !(Z=0 & N=V
-    (pattern al #:with condnum #b1110) ; Always
+    (pattern eq
+             #:with branch-opcode #'b.eq
+             #:with branch-inverse-opcode #'b.ne
+             #:with condnum #b0000) ; equal Z = 1
+    (pattern ne
+             #:with branch-opcode #'b.ne
+             #:with branch-inverse-opcode #'b.eq
+             #:with condnum #b0001) ; not equal, Z = 0
+    (pattern cs
+             #:with branch-opcode #'b.cs
+             #:with branch-inverse-opcode #'b.cc
+             #:with condnum #b0010) ; Carry set, C = 1
+    (pattern cc
+             #:with branch-opcode #'b.cc
+             #:with branch-inverse-opcode #'b.cs
+             #:with condnum #b0011) ; Carry clear, C = 0    
+    (pattern mi
+             #:with branch-opcode #'b.mi
+             #:with branch-inverse-opcode #'b.pl
+             #:with condnum #b0100) ; Minus, neg ; N = 1
+    (pattern pl
+             #:with branch-opcode #'b.pl
+             #:with branch-inverse-opcode #'b.mi
+             #:with condnum #b0101) ; Positive or zero ; N = 0
+    (pattern vs
+             #:with branch-opcode #'b.vs
+             #:with branch-inverse-opcode #'b.vc
+             #:with condnum #b0110) ; Overflow  ; V = 1
+    (pattern vc
+             #:with branch-opcode #'b.vc
+             #:with branch-inverse-opcode #'b.vs
+             #:with condnum #b0111) ; No overfolow, V = 0
+    (pattern hi
+             #:with branch-opcode #'b.hi
+             #:with branch-inverse-opcode #'b.ls
+             #:with condnum #b1000) ; Unsigned higher, C = 1 && z = 0
+    (pattern ls
+             #:with branch-opcode #'b.ls
+             #:with branch-inverse-opcode #'b.hi
+             #:with condnum #b1001) ; Unsigned lower or same !(C=1&&z=0)
+    (pattern ge
+             #:with branch-opcode #'b.ge
+             #:with branch-inverse-opcode #'b.lt
+             #:with condnum #b1010) ; Signed greater eq, N = V
+    (pattern lt
+             #:with branch-opcode #'b.lt
+             #:with branch-inverse-opcode #'b.ge
+             #:with condnum #b1011
+             ) ; Signed le, N! = V   
+    (pattern gt
+             #:with branch-opcode #'b.gt
+             #:with branch-inverse-opcode #'b.le
+             #:with condnum #b1100) ; Signed gt, Z = 0 && N = V
+    (pattern le
+             #:with branch-opcode #'b.le
+             #:with branch-inverse-opcode #'b.gt
+             #:with condnum #b1101) ; Signed le or eq, !(Z=0 & N=V
+    (pattern al
+             #:with branch-opcode #'b.al
+             #:with branch-inverse-opcode #'b.al
+             #:with condnum #b1110) ; Always
 )
   (define-syntax-class opcode
     #:description "opcode"
@@ -1254,7 +1304,7 @@
      )]))
   
 (provide (all-defined-out))
-(provide (for-syntax immediate system-register opcode register register-32 register-64 label label-targ))
+(provide (for-syntax condition immediate system-register opcode register register-32 register-64 label label-targ))
 
 
 ;#xFFFF0000
