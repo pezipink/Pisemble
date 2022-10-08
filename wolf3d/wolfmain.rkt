@@ -122,6 +122,9 @@
         eret
         }]))
 
+(define-syntax-parser inc [(_ reg:register) #'{ add reg reg @1 }])
+(define-syntax-parser dec [(_ reg:register) #'{ sub reg reg @1 }])
+
 (define-syntax (handle-invalid-entry stx)
   (syntax-parse stx
     [(_ type)
@@ -275,17 +278,28 @@
     str w1 [x0]
 
     ; now we are going to ask for a frame buffer
-    (debug-str "value before:" #t)
+;    (debug-str "value before:" #t)
     adr x0 MBOX-MSG:
     (debug-reg w0)
     ;    add x0 x0 @24
     ldrb w0 (x0 @0)
     (debug-reg w0)
     
-    ldr x0 textures-address:
-    mov x0 @0
-    mov x1 @16
+    ;; adr x0 tilemap:
+    ;; mov x1 @256
+    ;; bl memory-dump:
+    (debug-str "loading level.." #t)
+    bl setup-game-level:
+    bl scan-info-plane:
+    ;    adr x1 disassemble-dump:
+    ;; mov x1 @0
+    ;; mov x2 @512
+    ;; bl disassemble-dump:
+    
+    adr x0 tilemap:
+    mov x1 @256
     bl memory-dump:
+    
     
     (debug-str "fb addr nefore" #t)
     adr x0 fb:
@@ -494,6 +508,40 @@
 :memory-dump-template (write-ascii dump-template)                  
 
 /= 4
+(subr disassemble-dump
+      ([address x1]
+       [instruction-count w2])
+      [x0] {
+    ; initiate disassemble send
+    mov w0 @4
+    bl send-char:
+    ; send address         
+    mov x0 x1
+    bl send-char:
+    (for ([_ (in-range 7)])
+      { lsr x0 x0 @8
+        bl send-char: })
+    ; send count    
+    mov x0 x2
+    bl send-char:
+    (for ([_ (in-range 3)])
+      { lsr x0 x0 @8
+        bl send-char: })
+    lsr instruction-count instruction-count @1 ; we do 64 bits at a time
+    ; send instructions
+    (whilenz instruction-count {
+      ldr x0 [x1] @8
+      bl send-char:
+      (for ([_ (in-range 7)])
+        { lsr x0 x0 @8
+          bl send-char: })
+      
+      sub instruction-count instruction-count @1
+    })
+})         
+
+
+/= 4
 (subr send-string
       ([address x1]
        [len x2]) [x0] {
@@ -508,7 +556,7 @@
   })
   mov w0 @$A ; line feed
   bl  send-char:
-  ;; mov w0 @$D ; cr
+   ;; mov w0 @$D ; cr
   ;; bl  send-char:
 
   ; signal string end
@@ -546,7 +594,7 @@
          (aux 0 size)))])
 
 
-(asm-struct _voffset_msg
+(/struct _voffset_msg
   ([total-size 4]     ; total buffer size bytes including headers
    [request-code 4]   ; request / response code (0 = request)
    ;begin tags
@@ -633,6 +681,9 @@ ret x30
 :show-invalid-entry-message
 (debug-str "unhandled exception" #t)
 (debug-reg x0 x1 x2)
+mov x1 x2
+mov x2 @32
+bl disassemble-dump:
 ret x30
 
 /= $800
@@ -759,6 +810,14 @@ error_invalid_el0_32:
 
 (begin-for-syntax
   (define labels (make-hash))
+  (define (format-label label)
+    (string->symbol (format ":~a"  label)))
+  (define (format-target label type)
+    (case type
+      ['+     (string->symbol (format "~a+" label))]
+      ['-     (string->symbol (format "~a-" label))]
+      [else (error (format "bad label type ~a" type))]))
+             
   (define (gen-label name)
     (if (hash-has-key? labels name)
         (let ([val (hash-ref labels name)])
@@ -768,124 +827,17 @@ error_invalid_el0_32:
           (hash-set! labels name 0)
           (format "~a_~a" name 0)))))
 
-;; (define-syntax-parser ~=
-;;   [(_ x:register y:register target:label-targ)
-;;    #'{
-;;       ;todo: special case for when either case is x31 (zero reg)
-;;       cmp x y
-;;       b.eq target
-;;       }])
-;; (define-syntax-parser ~<>
-;;   [(_ x:register y:register target:label-targ)
-;;    #'{
-;;       ;todo: special case for when either case is x31 (zero reg)
-;;       cmp x y
-;;       b.ne target
-;;       }])
-;; (define-syntax-parser ~and
-;;   ;A will be 0 if all tests pass
-;;   ;Success is always defined as 0
-;;   [(_ test ...+ final)
-;;    (let ([done-label (gen-label "and_done")])
-;;    (with-syntax
-;;      ([start-label  (gen-label "and_start")]
-;;       [done-source (string->symbol (format ":~a" done-label))]
-;;       [done-target (string->symbol (format "~a+" done-label))])
-;;      #'{
-;;      (set-jump-source-current start-label)        
-;;      {test
-;;       b.ne done-target
-;;      } ...
-;;      final
-;;      done-source
-;;      }))])
-
-;; (define-syntax-parser ~or
-;;   ;A will be 0 if any tests pass
-;;   ;Success is always defined as 0
-;;   [(_ test ...+ final)
-;;    (let ([done-label (gen-label "or_done")])
-;;    (with-syntax
-;;      ([start-label  (gen-label "or_start")]
-;;       [done-source (string->symbol (format ":~a" done-label))]
-;;       [done-target (string->symbol (format "~a+" done-label))])
-;;      #'{
-;;      (set-jump-source-current start-label )        
-;;      {test
-;;       b.eq done-target      
-;;       } ...
-;;      final     
-;;      done-source
-;;      }))])
-
-;; (define-syntax-parser ~if
-;;   [(_ test true-code false-code)
-;;    (let ([false-label (gen-label "if-false")]
-;;          [end-label (gen-label "if-end")])         
-;;    (with-syntax
-;;      ([start-label  (gen-label "if_start")]
-;;       [false-source (string->symbol (format ":~a" false-label))]
-;;       [false-target (string->symbol (format "~a:" false-label))]
-;;       [end-source (string->symbol (format ":~a" end-label))]
-;;       [end-target (string->symbol (format "~a:" end-label))])
-;;      #'{
-;;         (set-jump-source-current  start-label)
-;;         test
-;;         b.ne false-target
-;;         true-code
-;;         b end-target
-;;         false-source
-;;         false-code
-;;         end-source
-;;       }))])
-
-;; (define-syntax-parser ~while
-;;   [(_ test body)
-;;    (let ([loop-start (gen-label "while-start")])
-;;      (with-syntax
-;;        ([start-label (string->symbol (format ":~a" loop-start))]
-;;         [start-target (string->symbol (format "~a-" loop-start))])
-;;         #'{
-;;            (set-jump-source-current  start-label)
-;;            body
-;;            test
-;;            b.ne start-target
-;;           }))])
-
-
 (define-syntax-parser whilenz
   [(_ test-register:register body)
    (let ([loop-start (gen-label "whilenz-start")])
      (with-syntax
-       ([start-label (string->symbol (format ":~a" loop-start))]
-        [start-target (string->symbol (format "~a-" loop-start))])
+       ([start-label (format-label loop-start)]
+        [start-target (format-target loop-start '-)])
         #'{
            start-label body
            cbnz test-register start-target
            }))])
 
-(define-syntax-parser while-true
-  [(_ true-test body)
-   (let ([loop-start (gen-label "while-start")])
-     (with-syntax
-       ([start-label (string->symbol (format ":~a" loop-start))]
-        [start-target (string->symbol (format "~a-" loop-start))])
-        #'{
-           start-label body
-           true-test            
-           b.eq start-target
-           }))])
-(define-syntax-parser while-false
-  [(_ true-test body)
-   (let ([loop-start (gen-label "while-start")])
-     (with-syntax
-       ([start-label (string->symbol (format ":~a" loop-start))]
-        [start-target (string->symbol (format "~a-" loop-start))])
-        #'{
-           start-label body
-           true-test            
-           b.ne start-target
-          }))])
 
 ; test routine that displays each texture on the screen
 ; this relies on the delay and image number loop
@@ -911,7 +863,7 @@ error_invalid_el0_32:
     ; now we are ready to copy
     mov y @64
     ; equiv to whilenz
-    (while-false { cmp y xzr } {
+    (whilenz y {
       mov x @64
       (whilenz x {
         ; copy 4 bytes from source to dest
@@ -1103,6 +1055,386 @@ error_invalid_el0_32:
 :quit})
 
 
+(define-syntax (compile-condition stx)
+  (syntax-parse stx #:datum-literals (/and /or)
+  [(_ (lhs:register cond:condition rhs:register) branch-target:label-targ)
+   #'{cmp lhs rhs
+      cond.branch-opcode branch-target}]
+  [(_ (lhs:register cond:condition #:immediate n) branch-target:label-targ)
+   #'{cmp lhs @n
+      cond.branch-opcode branch-target}]
+
+  [(_ (/and cases ...) then-target:label-targ)
+   ; this has come from an OR since we are in non-inverse.
+   ; the target passed is the success case for the parent OR
+   ; here then we want to go to that label if all of the ANDs
+   ; mathc, or short circuit to a new label after these ANDs if any fail
+   (let ([else-start (gen-label "else-start")])
+     (with-syntax
+       ([else-label (format-label else-start)]
+        [else-target (format-target else-start '+)])
+        #'{
+           (compile-inverse-condition cases else-target) ...
+           b then-target
+           else-label 
+           }))]
+   ;  #'(/if-and (cases ...) then-target)]
+  ))
+
+(define-syntax (compile-inverse-condition stx)
+  (syntax-parse stx #:datum-literals (/and /or)
+  [(_ (lhs:register cond:condition rhs:register) branch-target:label-targ)
+   #'{cmp lhs rhs
+      cond.branch-inverse-opcode branch-target}]
+  [(_ (lhs:register cond:condition #:immediate n) branch-target:label-targ)
+   #'{cmp lhs @n
+      cond.branch-inverse-opcode branch-target}]
+
+  [(_ (/or cases ...) else-target:label-targ)
+   ; this has come from an AND since we are in inverse.
+   ; the target passed is the fail case for the parent AND
+   ; here then we want to go to that label if none of the ORs
+   ; mathc, or short circuit to a new label after these ORs if any match
+   (let ([then-start (gen-label "then-start")])
+     (with-syntax
+       ([then-label (format-label then-start)]
+        [then-target (format-target then-start '+)])
+        #'{
+           (compile-condition cases then-target) ...
+           b else-target
+           then-label 
+           }))
+   
+   ;#'(/if-or (cases ...) else-target)
+
+   ]
+
+  ))
+(define-syntax-parser /when-or
+  [(_ (conditions ...) then-body) 
+   (let ([then-start (gen-label "then-start")]
+         [if-end (gen-label "if-end")]         )
+     (with-syntax
+       ([then-label (format-label then-start)]
+        [then-target (format-target then-start '+)]
+        [end-label (format-label if-end)]
+        [end-target (format-target if-end '+)])
+        #'{
+           (compile-condition conditions then-target) ...
+           b end-target
+           then-label then-body
+           end-label
+           }))])
+
+(define-syntax-parser /when-and
+  [(_ (conditions ...) then-body) 
+   (let (
+         [if-end (gen-label "if-end")])
+     (with-syntax
+       (
+        [end-label (format-label if-end)]
+        [end-target (format-target if-end '+)])
+        #'{
+           (compile-inverse-condition conditions end-target) ...
+           then-body
+           end-label
+           }))])
+
+(define-syntax-parser /if-and
+  [(_ (conditions ...) then-body else-body) ; parent is an and
+   (let (
+         [else-start (gen-label "else-start")]
+         [if-end (gen-label "if-end")])
+     (with-syntax
+       (
+        [else-label (format-label else-start)]
+        [else-target (format-target else-start '+)]
+        [end-label (format-label if-end)]
+        [end-target (format-target if-end '+)])
+        #'{
+           (compile-inverse-condition conditions else-target) ...
+           then-body
+           b end-target
+           else-label else-body
+           end-label
+           }))]
+
+  )
+
+(define-syntax-parser /if-or
+  [(_ (conditions ...) then-body else-body) 
+   (let ([then-start (gen-label "then-start")]
+         [if-end (gen-label "if-end")]         )
+     (with-syntax
+       ([then-label (format-label then-start)]
+        [then-target (format-target then-start '+)]
+        [end-label (format-label if-end)]
+        [end-target (format-target if-end '+)])
+        #'{
+           (compile-condition conditions then-target) ...
+           else-body           
+           b end-target
+           then-label then-body
+           end-label
+           }))]
+  )
+
+(define-syntax-parser /if #:datum-literals (/and /or)
+  [(_ (/and conditions ...) then-expr:expr else-expr:expr)
+   #'(/if-and
+      (conditions ...)
+      then-expr
+      else-expr
+     )]
+
+  [(_ (/or conditions ...) then-expr:expr else-expr:expr)
+   #'(/if-or
+      (conditions ...)
+      then-expr
+      else-expr
+      )]
+  [(_ condition:expr then-body:expr else-body:expr)
+   (let ([then-start (gen-label "then-start")]
+         [else-start (gen-label "else-start")]
+         [if-end (gen-label "if-end")])
+     (with-syntax
+       ([then-label (string->symbol (format ":~a" then-start))]
+        [then-target (string->symbol (format "~a+" then-start))]
+        [else-label (format-label else-start)]
+        [else-target (format-target else-start '+)]
+        [end-label (string->symbol (format ":~a" if-end))]
+        [end-target (string->symbol (format "~a+" if-end))])
+        #'{
+           (compile-condition condition then-target)
+           else-label  else-body
+           b end-target
+           then-label then-body
+           end-label
+           }))])
+
+(define-syntax-parser /when #:datum-literals (/and /or)
+  [(_ (/and conditions ...) then-expr:expr)
+   #'(/when-and
+      (conditions ...)
+      then-expr
+     )]
+
+  [(_ (/or conditions ...) then-expr:expr)
+   #'(/when-or
+      (conditions ...)
+      then-expr
+      )]
+  [(_ condition:expr then-body:expr)
+   (let ([then-start (gen-label "then-start")]
+         [if-end (gen-label "if-end")])
+     (with-syntax
+       ([then-label (string->symbol (format ":~a" then-start))]
+        [then-target (string->symbol (format "~a+" then-start))]
+        [end-label (string->symbol (format ":~a" if-end))]
+        [end-target (string->symbol (format "~a+" if-end))])
+        #'{
+           (compile-condition condition then-target)
+           b end-target
+           then-label then-body
+           end-label
+          }))])
+
+  
+
+
+   
+(define-syntax-parser /for ; note this won't work for a loop that runs 0 times
+  [(_ initializer:expr condition:expr update:expr body:expr)
+   (let ([loop-start (gen-label "for-start")]
+         [loop-end (gen-label "for-end")])
+     (with-syntax
+       ([start-label (format-label loop-start)]
+        [start-target (format-target loop-start '-)]
+        [end-label (format-label loop-end)]
+        [end-target (format-target loop-end '+)]
+        )
+        #'{initializer
+           start-label
+           body
+           update
+           (/when condition {b start-target})
+;           (compile-condition condition start-target end-target)
+           end-label
+           }))])
+
+;; (define-syntax-parser /when
+;;   [(_ condition:expr body:expr)
+;;    (let ([true-start (gen-label "when-true")]
+;;          [false-start (gen-label "when-false")])
+;;      (with-syntax
+;;        ([true-label (format-label true-start)]
+;;         [true-target (format-target true-start '+)]
+;;         [false-label (format-label false-start)]
+;;         [false-target (format-target false-start '+)]
+;;         )
+;;        #'{
+;;           ; jump away when the condition is false
+;;            (compile-inverse-condition condition false-target true-target)
+;;            true-label
+;;              body
+;;            false-label 
+;;            }))])
+
+;; (define-syntax-parser /if
+;;   [(_ condition:expr then-body:expr else-body:expr)
+;;    (let ([then-start (gen-label "then-start")]
+;;          [else-start (gen-label "else-start")]
+;;          [if-end (gen-label "if-end")])
+;;      (with-syntax
+;;        ([then-label (string->symbol (format ":~a" then-start))]
+;;         [then-target (string->symbol (format "~a+" then-start))]
+;;         [else-label (format-label else-start)]
+;;         [else-target (format-target else-start '+)]
+;;         [end-label (string->symbol (format ":~a" if-end))]
+;;         [end-target (string->symbol (format "~a+" if-end))])
+;;         #'{
+;;            (compile-condition condition then-target)
+;;            else-label  else-body
+;;            b end-target
+;;            then-label then-body
+;;            end-label
+;;           }))])
+
+; //////////////////////////////////////////////
+; WOLFENSTEIN CODE 
+; //////////////////////////////////////////////
+(define MAXACTORS 150)
+(define MAP_HEIGHT 64)
+(define MAP_WIDTH 64)
+  
+(/struct objstruct
+ ([active          1] ;activetype enum
+  [ticcount        2]
+  [obclass         1] ;classtype enum
+  [statetype       8] ; *state
+  [flags           4] ; FL_SHOOTABLE, etc
+  [distance        4] ; signed; if negative, wait for that door to open
+  [dirtype         1] ; dirtype enum
+  [x               2] ; fixed point
+  [y               2] ; fixed point
+  [tilex           2]
+  [tiley           2]
+  [areanumber      1]
+  [viewx           2]
+  [viewheight      2]
+  [transx          2] ; fixed, in global coord
+  [transy          2] ; fixed, in global coord
+  [angle           2]
+  [hitpoints       2]
+  [speed           4] ; signed
+  [temp1           2]
+  [temp2           2]
+  [hidden          2]
+  [next            8] ; *next objstruct
+  [prev            8] ; *prev objstruct
+  [pad             4] ; I'm adding this so it is 8 byte aligned (72 bytes)
+  ))
+
+
+(subr setup-game-level
+      ([raw-ptr x1]
+       [lvl-ptr x2]
+       [x x3]
+       [y x4]
+       [tile w5]
+       [offset x6])
+
+      [x1 x2 x3 x4 x5 x6] {
+
+  ; setup the walls and actors
+  ; x1 will point at the raw map data for level 1
+  ; x2 will point at the 2d byte array tilemap          
+  AREATILE = 107
+  ldr raw-ptr maps-address: ; this is a linker resolved label
+  ; each raw map section is a 16 bit word
+
+  ; for some reason the map is stored sideways compared to the raw data
+  ; so we have to calculate the index here;
+  ; x is the row and y is the offset [x][y]
+
+  nop
+  ;; (/if2 (/and (tile eq @5) (/or (x gt @10) (y gt @10)) (offset ne @10))
+  ;;      {mov x1 @1}
+  ;;      {mov x1 @0})
+
+  ;; (/if  (/or (x gt @10)
+  ;;             (/and (tile eq @5) (offset eq @42))
+  ;;             (y gt @10) )
+  ;;      {mov x1 @1}
+  ;;      {mov x1 @0})
+  
+  ;; (/when (/and (x gt @10) (y gt @10)) {
+  ;;   adr lvl-ptr tilemap:
+  ;; })    
+  
+  (/for { mov y @0 } (y lt @MAP_HEIGHT) (inc y) {
+    (/for { mov x @0 } (x lt @MAP_WIDTH) (inc x) {
+      ldrh tile [raw-ptr] @2
+      (/when (tile lt @AREATILE) {                                                         
+        ; lvlptr = tilemap: + (64 * x) + y
+        adr lvl-ptr tilemap:
+        lsl offset x @6 ; * 64
+        add lvl-ptr lvl-ptr offset
+        add lvl-ptr lvl-ptr y
+        strb tile [lvl-ptr] 
+      })
+    })                                                     
+  })
+  
+    
+})
+
+
+(subr scan-info-plane
+      ([raw-ptr x1]
+       [x x2]
+       [y x3]
+       [temp x4]
+       [tile w5])
+      [x1 x2 x3 x4] {
+
+  ; scan second map data plane and spawn player, statics, guards etc
+  ; for now we are only going to spawn the player        
+  ldr raw-ptr maps-address: ; this is a linker resolved label          
+  ; add 64 * 64 * 2 for start of second plane
+  mov x4 @64
+  lsl x4 x4 @7
+  add raw-ptr raw-ptr x4
+
+  (/for { mov y @0 } (y lt @MAP_HEIGHT) (inc y) {
+    (/for { mov x @0 } (x lt @MAP_WIDTH) (inc x) {
+      ldrh tile [raw-ptr] @2
+      (/when (/and (tile le @22) (tile ge @19)) {
+        (debug-str "FOUND PLAYER!" #t)
+        (debug-reg x)
+        (debug-reg y)
+      })
+    })                                                     
+  })
+          
+})          
+;; ///////////////////////////////////////////////////////
+;; wolfenstein GAME STATE VARIABLES
+;; ///////////////////////////////////////////////////////
+/= 8
+; wall locations (byte[64][64])
+:tilemap (reserve (* 64 64))
+/= 8
+; actor locations (ptr[64][64]
+:actorat (reserve (* 64 64 8))
+/= 8
+:objlist (reserve (* (objstruct/sizeof) MAXACTORS))
+
+
+
+
+
+
   ; the following values are used for loading 64 bit addresses/values via LDR(literal)
   ; and they must be 64 bit aliged otherwise the CPU faults!
 /= 8
@@ -1211,7 +1543,6 @@ error_invalid_el0_32:
 ;;    :voffset-y
 ;;       (write-value-32 0); y
 ;;     (write-value-32 0) ;end tag
-
 
 
 

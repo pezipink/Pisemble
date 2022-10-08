@@ -1,7 +1,7 @@
 #lang pisemble
 (require (for-syntax syntax/parse racket/stxparam racket/syntax))
 (require syntax/parse/define)
-(provide load-immediate asm-struct)
+(provide load-immediate /struct)
 
 (define-syntax-parser load-immediate ;todo: probably want this as a core macro in pisemble itself?
   [(_ target:register value:expr)
@@ -108,7 +108,7 @@
   )
 
 
-(define-syntax-parser asm-struct
+(define-syntax-parser /struct
   [(_ struct-name:id ([member-name:id size:expr]...))
    #:with size-name (format-id this-syntax "~a/sizeof" #'struct-name)
    #:with ([field-name field-size offset] ... )
