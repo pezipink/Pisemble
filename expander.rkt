@@ -418,7 +418,7 @@
     ['ldrh 'reg_reg_imm  'imm9-rn-rd                         #b01111000010000000000010000000000 #f #f]
     ['ldrh 'reg_reg-imm_excla  'imm9-rn-rd                   #b01111000010000000000110000000000 #f #f]
     
-    ['ldrh 'reg_reg-imm_ 'imm12-rn-rd                        #b01111001010000000000000000000000 b31 #f]
+    ['ldrh 'reg_reg-imm_ 'imm12-rn-rd                        #b01111001010000000000000000000000 b31 always-shift-1]
 
     ['ldrb 'reg_reg_imm  'imm9-rn-rd                         #b00111000010000000000010000000000 b30 #f]
     ['ldrb 'reg_reg-imm_excla  'imm9-rn-rd                   #b00111000010000000000110000000000 #f #f]
@@ -453,7 +453,7 @@
     ['strh 'reg_reg-imm_excla 'imm9-rn-rd                    #b01111000000000000000110000000000 #f #f]
     ['strh 'reg_reg_imm   'imm9-rn-rd                        #b01111000000000000000010000000000 #f #f]
     
-    ;unsigned offset mode, 32 bit only. always shift by 4
+    ;unsigned offset mode, 32 bit only. always shift by 1
     ['strh 'reg_reg-imm_ 'imm12-rn-rd                        #b01111001000000000000000000000000 b31 always-shift-1]
 
     ['strb 'reg_reg-imm_excla 'imm9-rn-rd                    #b00111000000000000000110000000000 #f #f]
@@ -623,6 +623,11 @@
 (define (write-ascii str)
   (for ([c str])
     (write-value (lo-byte (char->integer c)))))
+
+(define (write-ascii-nullterm str)
+  (for ([c str])
+    (write-value (lo-byte (char->integer c))))
+  (write-value 0))
 
 (define (reserve byte-count)
   (for ([x (in-range byte-count)])

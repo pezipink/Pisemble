@@ -214,6 +214,10 @@
      ;Mailbox channels
      mbox-ch-prop = $8  ; request to VC from ARM
 
+     ; wolf bits
+     TILESHIFT = 16
+     TILEGLOBAL = (arithmetic-shift 1 16)
+     TILEGLOBAL/2 = (/ TILEGLOBAL 2)
      ; if cpu zero then goto main:
      mrs x0 mpidr_el1
      mov x1 @$3
@@ -296,9 +300,9 @@
     ;; mov x2 @512
     ;; bl disassemble-dump:
     
-    adr x0 tilemap:
-    mov x1 @256
-    bl memory-dump:
+    ;; adr x0 tilemap:
+    ;; mov x1 @256
+    ;; bl memory-dump:
     
     
     (debug-str "fb addr nefore" #t)
@@ -541,6 +545,8 @@
 })         
 
 
+
+
 /= 4
 (subr send-string
       ([address x1]
@@ -563,7 +569,26 @@
   mov w0 @0
   bl send-char:
 })
+
+;; (subr send-string-nullterm
+;;       ([address x1]) [x0] {
+
+;;   ; initiate string send
+;;   mov w0 @1                       
+;;   bl send-char:
+
+;;   (/whilenz x0 {
+;;     ldrb x0 [address] @1  ; x0 = *address++
+;;     bl send-char:
+;;   })
+;;   mov w0 @$A ; line feed
+;;   bl  send-char:
+;;   ; signal string end
+;;   mov w0 @0
+;;   bl send-char:
   
+;; })
+
 ; x0 = address
 ; x1 = count
 ; this trashes registers .. so push first!
@@ -574,8 +599,6 @@
 ;;   mov x0 @(#/'$)
 ;;   bl send-char                               
 ;; })                       
-
-
 
 (define-syntax-parser zero-mem
   [(_ base:register size:expr)
@@ -608,7 +631,7 @@
 (define-syntax-parser write-virtual-offset
   [(_ base:register y-loc:register)
    #'{ ;note this trashes x0
-      (zero-mem base (_voffset_msg/sizeof))
+      (zero-mem base (sizeof/_voffset_msg))
       (_voffset_msg/total-size-set (* 8 4) base)
       (_voffset_msg/tag-id-set $48009 base)
       (_voffset_msg/request-size-set 8 base)
@@ -621,11 +644,11 @@
 ; pass y value in x3
 (subr page-flip ([ptr x16]) [x0 x1 x2 x16] {
   ; reserve space on stack for v-offset message
-  sub sp sp @(_voffset_msg/sizeof)                                          
+  sub sp sp @(sizeof/_voffset_msg)                                          
   (write-virtual-offset sp x3)
   mov x8 sp
   bl send-vcore-msg:
-  add sp sp @(_voffset_msg/sizeof)                                          
+  add sp sp @(sizeof/_voffset_msg)                                          
 })
 
 
@@ -1073,31 +1096,36 @@ error_invalid_el0_32:
 (define MAP_HEIGHT 64)
 (define MAP_WIDTH 64)
   
-(/struct objstruct
- ([active          1] ;activetype enum
-  [ticcount        2]
-  [obclass         1] ;classtype enum
-  [statetype       8] ; *state
+(/struct _objstruct
+ ([statetype       8] ; *state
+  [next            8] ; *next objstruct
+  [prev            8] ; *prev objstruct
+
   [flags           4] ; FL_SHOOTABLE, etc
   [distance        4] ; signed; if negative, wait for that door to open
-  [dirtype         1] ; dirtype enum
-  [x               2] ; fixed point
-  [y               2] ; fixed point
+  [speed           4] ; signed  
+  [x               4] ; fixed point
+  [y               4] ; fixed point
+  [transx          4] ; fixed, in global coord
+  [transy          4] ; fixed, in global coord
+  
+  [ticcount        2]
   [tilex           2]
   [tiley           2]
-  [areanumber      1]
   [viewx           2]
   [viewheight      2]
-  [transx          2] ; fixed, in global coord
-  [transy          2] ; fixed, in global coord
   [angle           2]
   [hitpoints       2]
-  [speed           4] ; signed
+
   [temp1           2]
   [temp2           2]
   [hidden          2]
-  [next            8] ; *next objstruct
-  [prev            8] ; *prev objstruct
+  
+  [active          1] ;activetype enum
+  [obclass         1] ;classtype enum
+  [dirtype         1] ; dirtype enum
+  [areanumber      1]
+
   [pad             4] ; I'm adding this so it is 8 byte aligned (72 bytes)
   ))
 
@@ -1123,7 +1151,6 @@ error_invalid_el0_32:
   ; so we have to calculate the index here;
   ; x is the row and y is the offset [x][y]
 
-  nop
 
   (/for { mov y @0 } (y lt @MAP_HEIGHT) (inc y) {
     (/for { mov x @0 } (x lt @MAP_WIDTH) (inc x) {
@@ -1142,7 +1169,90 @@ error_invalid_el0_32:
     
 })
 
+(subr spawn-player
+      ([tilex x1]
+       [tiley x2]
+       [dir x3]
 
+       [temp x4]
+       [ptr x5])
+      [x4] {
+
+  ; for now we assign the player to actors[0]
+  ; in the future this needs to be in InitActorList
+  ; and it must update the freelist etc.         
+  ; for now we only have a player and it is hardcoded         
+  adr ptr objlist:
+  adr temp player:
+  str ptr [temp]  ; player = objlist[0]
+
+  mov temp @1
+  nop
+  (_objstruct/obclass-set temp ptr) ; playerobj = 1
+  (_objstruct/active-set temp ptr)  ; ac_yes = 1
+  (_objstruct/tilex-set tilex ptr)  ; tilex = tilex
+  (_objstruct/tiley-set tiley ptr)  ; tiley = tiley
+
+  ; areanumber = map index (tiley << 6) + tilex  
+  lsl temp tiley @6
+  add temp temp tilex
+  ; multiply by 2 here because we need words not bytes. the C code is silently doubling the index
+  add temp temp temp
+  ldr x0 maps-address: ; this is a linker resolved label
+  add temp temp x0
+  
+  ldrb temp [temp]
+  (_objstruct/areanumber-set temp ptr) 
+
+  ; x = (tiley << TILESHIFT) + (TILEGLOBAL/2) (fixed point)
+  lsl temp tilex @TILESHIFT
+  (load-immediate x0 TILEGLOBAL/2)
+  add temp temp x0
+  (_objstruct/x-set temp ptr)  
+
+  ; y = (tiley << TILESHIFT) + (TILEGLOBAL/2) (fixed point)
+  lsl temp tiley @TILESHIFT
+  (load-immediate x0 TILEGLOBAL/2)
+  add temp temp x0
+  (_objstruct/y-set temp ptr)  
+
+
+  ; the last bits are state, angle and flags.
+  ; state we don't care about for now
+  ; angle resolves to zero for the first map so we ignore that for now
+
+  mov temp @4
+  (_objstruct/flags-set temp ptr)  ; FL_NEVERMARK = 4
+  
+  ;; (debug-str "obclass" #t)
+  ;; (_objstruct/obclass-get temp ptr)
+  ;; (debug-reg temp)
+
+  ;; (debug-str "active" #t)
+  ;; (_objstruct/active-get temp ptr)
+  ;; (debug-reg temp)
+
+  ;; (debug-str "tilex" #t)
+  ;; (_objstruct/tilex-get temp ptr)
+  ;; (debug-reg temp)
+
+  ;; (debug-str "tiley" #t)
+  ;; (_objstruct/tiley-get temp ptr)
+  ;; (debug-reg temp)
+
+  ;; (debug-str "areanumber" #t)
+  ;; (_objstruct/areanumber-get temp ptr)
+  ;; (debug-reg temp)
+
+  ;; (debug-str "x" #t)
+  ;; (_objstruct/x-get temp ptr)
+  ;; (debug-reg temp)
+
+  ;; (debug-str "y" #t)
+  ;; (_objstruct/y-get temp ptr)
+  ;; (debug-reg temp)
+
+})          
 (subr scan-info-plane
       ([raw-ptr x1]
        [x x2]
@@ -1166,6 +1276,15 @@ error_invalid_el0_32:
         (debug-str "FOUND PLAYER!" #t)
         (debug-reg x)
         (debug-reg y)
+        ;; call spawn-player with x, y, (tile - 19)
+        ;; calculate direction
+        (PUSH x1 x2 x3)
+        mov x1 x
+        mov x2 y
+        sub x3 tile @19
+        bl spawn-player:
+        (POP x3 x2 x1)
+        (debug-str "PLAYER SPAWNED!" #t)
       })
     })                                                     
   })
@@ -1181,8 +1300,9 @@ error_invalid_el0_32:
 ; actor locations (ptr[64][64]
 :actorat (reserve (* 64 64 8))
 /= 8
-:objlist (reserve (* (objstruct/sizeof) MAXACTORS))
-
+:objlist (reserve (* (sizeof/_objstruct) MAXACTORS))
+/= 8
+:player  (write-value-64 0)  ; objstruct*
 
 
 

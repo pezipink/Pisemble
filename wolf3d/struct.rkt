@@ -15,6 +15,22 @@
          }]
        [else (error (format "load-immediate: value too large, not currently supported ~a" value))])])
 
+;; (define-syntax-parser asm-print
+;;   [(_ struct-name (field-name ...))
+;;    #:with ([field-str len getter] ...)
+;;    (map (λ (x)
+;;           (let ([str (symbol->string (syntax-e x))]               )
+;;             (list str (string-length str) (format "~a-get" str )))
+;;           (syntax->list #'(field-name ...))))
+
+;;    ; pass pointer to struct in x1
+;;    #'(
+        
+;;         )])
+         
+   
+   
+      
 (define-syntax-parser asm-get-field
   [(_ ctx field-name size offset)
    #:when (equal? (eval (syntax-e #'size)) 8)
@@ -77,6 +93,7 @@
          [(_ target:register base:register)
           #:with actual-target (format-id this-syntax "W~a" (syntax-e #'target.regnum))
           #'{str actual-target (base @offset)}]
+         
          [(_ target:expr base:register)
           #'{(load-immediate w0 target)
              str w0 (base @offset)}]))]
@@ -110,7 +127,8 @@
 
 (define-syntax-parser /struct
   [(_ struct-name:id ([member-name:id size:expr]...))
-   #:with size-name (format-id this-syntax "~a/sizeof" #'struct-name)
+   #:with size-name (format-id this-syntax "sizeof/~a" #'struct-name)
+   #:with print-name (format-id this-syntax "print/~a" #'struct-name)
    #:with ([field-name field-size offset] ... )
    (let-values
        ([(res off)
@@ -140,6 +158,9 @@
        (define-for-syntax (field-name) offset) ...
        (asm-get-field struct-name field-name field-size offset) ...
        (asm-set-field struct-name field-name field-size offset) ...
+;       (define (print-name) (asm-print struct-name (field-name ...)))
+       
+       (align 4)
        )
    ])
 
