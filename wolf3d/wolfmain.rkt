@@ -6,6 +6,7 @@
 (require racket/file)
 (require racket/string)
 (require racket/match)
+(require racket/math)
 (require threading)
 (require "periph.rkt" "stack.rkt" "struct.rkt" "expr.rkt")
 
@@ -168,6 +169,12 @@
      #'(begin (debug-reg r)
               (debug-reg rn ...))]))
 
+(define-syntax-parser debug-str-reg
+  [(_ str:string reg:register)
+   #'{
+      (debug-str str #f)
+      (debug-reg reg)
+     }])
 
 (define-syntax (dump-all-regs stx)
   (syntax-parse stx
@@ -218,6 +225,10 @@
      TILESHIFT = 16
      TILEGLOBAL = (arithmetic-shift 1 16)
      TILEGLOBAL/2 = (/ TILEGLOBAL 2)
+     ANGLES = 360
+     FINEANGLES = 3600
+     ANGLEQUAD = (/ 360 4)
+
      ; if cpu zero then goto main:
      mrs x0 mpidr_el1
      mov x1 @$3
@@ -295,6 +306,21 @@
     (debug-str "loading level.." #t)
     bl setup-game-level:
     bl scan-info-plane:
+
+    ; calculate costable pointer into sintable
+    adr x1 sintable:
+    (debug-str-reg "sintable address " x1)
+    ; here we want to do sintable+90 (360/4)    
+    ; but since they are 4 bytes each we can
+    ; simply use 360 since we'd have to << 2 anway
+    nop
+    (load-immediate x0 ANGLES)
+    add x0 x1 x0
+    adr x1 costable:
+    str x0 [x1]
+    (debug-str-reg "costable address " x0)
+
+    
     ;    adr x1 disassemble-dump:
     ;; mov x1 @0
     ;; mov x2 @512
@@ -785,6 +811,8 @@ error_invalid_el0_32:
   msr vbar_el1 x0
   ret x30
 
+
+
 (subr enable-interrupt-controller () [x0 x1] {
   ;; ldr x0 ENABLE_IRQS_1:
   ;; mov x1 @SYSTEM_TIMER_IRQ_1      
@@ -964,13 +992,13 @@ error_invalid_el0_32:
     bl get-back-buffer:
     mov vptr x0
 
+    ; ===================
     ; clear screen
-
+    
     ; we do 8 pixels each iteration so
     ; we need 320*200/8 = $1F40 iterations
     mov temp @$1F40
     mov x3 @0
-
 :next
     str x3 [vptr]
     str x3 (vptr @8)
@@ -982,35 +1010,238 @@ error_invalid_el0_32:
     cbnz temp next-
     mov vptr x0
 
-    ; x27 holds a delay
-    ; this should be in memory
-    ; since we never even push these!
-    sub x27 x27 @1
-    cbnz x27 skip+
-    mov x27 @10
-    ; x28 holds next picture to display
-    ; also can easily be trashed!
-    sub x28 x28 @1
+    ; end clear screen
+    ; ====================
 
-    cbnz x28 skip+
-    mov x28 @105  ; 130 for 2d pics, 105 for textures
     
-:skip    
-    mov x0 vptr
-    mov x1 x28
+    mov x1 vptr
+    adr x0 debug-flag:
+    ldr x0 [x0]
+    cbz x0 done+    
+    bl ThreeDRefresh:   ; raycaster
+    mov temp @0
+    adr x0 debug-flag:
+    str temp [x0]
 
-;    mov x1 @84
-    
-    ;bl render-pic:  ; render 2d pics
-    bl render-tex:   ; render 2d textures
+    :done
     ;signal render has finished
     mov temp @1
     adr x0 finished-rendering:
-    str temp [w0]
+    str temp [x0]
 
 
     b loop-
-   })
+    })
+(define-syntax-parser FixedMul
+  ; these should be x registers only, cba to put a check in
+  ; trashes x0
+  ([_ target:register x:register y:register]
+   #'{
+      ; TODO: madd here when i implement it
+      mul target x y
+      (load-immediate x0 $8000)
+      add target target x0
+      lsr target target @16
+     }))
+   
+(subr ThreeDRefresh
+      ([vptr x1]
+       
+       [ply x2]
+       [temp w3]
+       [temp2 w4]
+       [temp3 x5]
+       [ptr x5])
+      [x1]
+      {
+
+  ; first we'd clear spotvis that will detect sprite hits
+  ; but we are not doing this yet     
+
+  ; ===============
+  ; CalcViewVariables
+
+  ; player: is a pointer!
+  ldr ply player:
+
+  ; viewangle = ply->angle    
+  (_objstruct/angle-get temp ply)    
+  adr x0 viewangle:
+  str temp [x0]
+
+  ; debug
+  ldr w0 [x0]
+  (debug-str-reg "viewangle is " x0)
+  ; end debug
+  
+  
+  ;midangle = viewangle * (FINEANGLES/ANGLES)
+  (load-immediate x0 (/ FINEANGLES ANGLES))
+  mul temp2 temp x0
+  adr x0 midangle:
+  str temp2 [x0]
+
+  ; debug
+  ldr w0 [x0]
+  (debug-str-reg "midangle is " x0)
+  ; end debug
+  
+  ;TODO: really need to add support for the ldr / str with
+  ; offset registers optionally shifted
+  
+  ; viewsin = sintable[viewangle]
+  ; temp = viewangle
+  adr ptr sintable:
+  lsr temp2 temp @2  ; multiply by 4 since 32bits
+  add ptr ptr temp2    ; todo: this could all be 1 instruction
+  ldr w0 [ptr]
+  adr ptr viewsin:
+  str w0 [ptr]
+
+  ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "viewsin is " x0)
+  ; end debug
+
+  
+  ; viewy = player->x + FIxedMul(focallength,viewsin)  
+  ldr temp2 focallength:
+  (FixedMul temp3 x0 temp2)
+  (debug-str-reg "rresult " temp3)
+  (_objstruct/y-get temp2 ply)
+  (debug-str-reg "player->y " temp2)
+  sub x0 temp2 temp3
+  adr ptr viewx:
+  str w0 [ptr]
+
+  ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "viewy is " x0)
+  ; end debug
+  
+  ; viewcos = costable[viewangle]
+  ; tmep = viewangle
+  ; costable is a pointer
+  ldr ptr costable:
+  add ptr ptr temp2
+  ldr w0 [ptr]
+  adr ptr viewcos:
+  str w0 [ptr]
+
+    ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "viewcos is " x0)
+  ; end debug
+
+  
+  ; viewx = player->x - FIxedMul(focallength,viewcos)  
+  ldr temp2 focallength:
+  (debug-str-reg "focallength " temp2)
+  (FixedMul temp3 x0 temp2)
+  (debug-str-reg "result " temp3)
+  (_objstruct/x-get temp2 ply)
+  (debug-str-reg "player->x " temp2)
+  sub x0 temp2 temp3
+  adr ptr viewx:
+  str w0 [ptr]
+
+  ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "viewx is " x0)
+  ; end debug
+
+  
+  ; focaltx = viewx >> 16
+  lsr w0 w0 @16
+  adr ptr focaltx:
+  str w0 [ptr]
+  
+  ; focalty = viewy >> 16
+  lsr w0 w0 @16
+  adr ptr focalty:
+  str w0 [ptr]
+  
+  ; viewtx = player->x >> 16}
+  (_objstruct/x-get temp2 ply)
+  lsr x0 temp2 @16
+  adr ptr viewtx:
+  str w0 [ptr]
+
+  ; viewty = player->y >> 16}
+  (_objstruct/y-get temp2 ply)
+  lsr x0 temp2 @16
+  adr ptr viewty:
+  str w0 [ptr]
+
+  ; =================
+  
+})
+
+; old gfx code that does the slideshows
+;; (subr update-gfx  (
+;;                   [temp x4] ; temporary / intermediates
+;;                   [tptr x8]
+;;                   [vptr x9] ; video memory pointer
+;;                   [row-size x14]
+;;                   ) [x0 x1 x2 x3 x4]
+;;                     {
+
+;; :loop
+;;     ldr w0 finished-rendering:
+;;     cbnz x0 loop-
+;;     bl get-back-buffer:
+;;     mov vptr x0
+
+;;     ; ===================
+;;     ; clear screen
+    
+;;     ; we do 8 pixels each iteration so
+;;     ; we need 320*200/8 = $1F40 iterations
+;;     mov temp @$1F40
+;;     mov x3 @0
+;; :next
+;;     str x3 [vptr]
+;;     str x3 (vptr @8)
+;;     str x3 (vptr @16)
+;;     str x3 (vptr @24)
+;;     add vptr vptr @32
+
+;;     sub temp temp @1
+;;     cbnz temp next-
+;;     mov vptr x0
+
+;;     ; end clear screen
+;;     ; ====================
+    
+;;     ; x27 holds a delay
+;;     ; this should be in memory
+;;     ; since we never even push these!
+;;     sub x27 x27 @1
+;;     cbnz x27 skip+
+;;     mov x27 @10
+;;     ; x28 holds next picture to display
+;;     ; also can easily be trashed!
+;;     sub x28 x28 @1
+
+;;     cbnz x28 skip+
+;;     mov x28 @105  ; 130 for 2d pics, 105 for textures
+    
+;; :skip    
+;;     mov x0 vptr
+;;     mov x1 x28
+
+;; ;    mov x1 @84
+    
+;;     ;bl render-pic:  ; render 2d pics
+;;     bl render-tex:   ; render 2d textures
+;;     ;signal render has finished
+;;     mov temp @1
+;;     adr x0 finished-rendering:
+;;     str temp [w0]
+
+
+;;     b loop-
+;;    })
 
 
 ; interrupt handler
@@ -1187,7 +1418,7 @@ error_invalid_el0_32:
   str ptr [temp]  ; player = objlist[0]
 
   mov temp @1
-  nop
+
   (_objstruct/obclass-set temp ptr) ; playerobj = 1
   (_objstruct/active-set temp ptr)  ; ac_yes = 1
   (_objstruct/tilex-set tilex ptr)  ; tilex = tilex
@@ -1204,16 +1435,22 @@ error_invalid_el0_32:
   ldrb temp [temp]
   (_objstruct/areanumber-set temp ptr) 
 
-  ; x = (tiley << TILESHIFT) + (TILEGLOBAL/2) (fixed point)
+  ; x = (tilex << TILESHIFT) + (TILEGLOBAL/2) (fixed point)
+  (debug-str-reg "tilexx = " tilex)
   lsl temp tilex @TILESHIFT
   (load-immediate x0 TILEGLOBAL/2)
   add temp temp x0
-  (_objstruct/x-set temp ptr)  
+  (debug-str-reg "player->x = " temp)
+  (_objstruct/x-set temp ptr)
+
+  (_objstruct/x-get temp ptr)
+  (debug-str-reg "* player->x = " temp)
 
   ; y = (tiley << TILESHIFT) + (TILEGLOBAL/2) (fixed point)
   lsl temp tiley @TILESHIFT
-  (load-immediate x0 TILEGLOBAL/2)
+  (load-immediate x0 TILEGLOBAL/2)  
   add temp temp x0
+  (debug-str-reg "player->y = " temp)
   (_objstruct/y-set temp ptr)  
 
 
@@ -1278,12 +1515,12 @@ error_invalid_el0_32:
         (debug-reg y)
         ;; call spawn-player with x, y, (tile - 19)
         ;; calculate direction
-        (PUSH x1 x2 x3)
-        mov x1 x
-        mov x2 y
-        sub x3 tile @19
-        bl spawn-player:
-        (POP x3 x2 x1)
+        (preserve [x1 x2 x3] {
+          mov x1 x
+          mov x2 y
+          sub x3 tile @19
+          bl spawn-player:
+        })
         (debug-str "PLAYER SPAWNED!" #t)
       })
     })                                                     
@@ -1417,11 +1654,87 @@ error_invalid_el0_32:
 ;;       (write-value-32 0); y
 ;;     (write-value-32 0) ;end tag
 
+; wolf lets you resize the viewport and thus it recalcualtes various projection bits
+; our version is hardcoded at 320 * 160 (no border) so we can calculate the bits at compile time
+/= 8
+:debug-flag (write-value-64 1)
+:focallength (write-value-32 $5700)
+:scale (write-value-32 128)
+:heightnumerator (write-value-32 223232)
+:viewx (write-value-32 0)
+:viewy (write-value-32 0)
+:viewsin (write-value-32 0)
+:viewcos (write-value-32 0)
+:vbufPitch (write-value-32 320)
+; these next ones are shorts but we'll store them as 4 bytes 
+:viewangle (write-value-32 0)
+:midangle (write-value-32 0)
+:angle (write-value-32 0)
+:viewtx (write-value-32 0)
+:viewty (write-value-32 0)
+:focaltx (write-value-32 0)
+:focalty (write-value-32 0)
+; end shorts
+
+(define MINDIST #x5800)
+(define viewwidth 320)
+(define halfview (/ viewwidth 2))
+(define facedist (+ 0.0 #x5700 MINDIST))
+(define scale 128)
+(define heightnumerator 223232)
+(define radtoint 572.9578)
+/= 8
+:pixelangle
+(let ([vec (make-vector viewwidth)]
+      [calcangle (λ (i)
+         (define tang (/(* i #x10000) viewwidth facedist))
+         (define ang (atan tang))
+         (define intang  (inexact->exact (floor (* ang radtoint))))
+         intang)])
+  (for ([i (in-range halfview)])
+    (let* ([ang (calcangle i)]
+           [nang (- ang)])
+      (vector-set! vec (- halfview 1 i) ang)
+      (vector-set! vec (+ halfview i) nang)))
+  (for ([v vec])
+    (write-value-16 v)))
+
+(define GLOBAL1 (arithmetic-shift 1 16))
+; next up is the tangent table
+/= 8
+:finetangent
+(let ([vec (make-vector (/ FINEANGLES 4))])
+  (for ([i (in-range (/ FINEANGLES 8))])
+    (define tang (tan (/ (+ i 0.5) radtoint)))
+    (vector-set! vec i (inexact->exact (floor (* tang GLOBAL1))))
+    (vector-set! vec (- (/ FINEANGLES 4) 1 i) (inexact->exact (floor (* (/ 1 tang) GLOBAL1)))))
+  (for ([v vec])
+    (write-value-32 v)))
+
+; now for sin / cos
+; costable overlays sintable with a quarter phase shift
+(define anglestep (/ pi 2 ANGLEQUAD))
+/= 8
+:costable (write-value-64 0)  ; pointer into sintable
+:sintable  ; costable is :sintable + (ANGLEQUAD * 4 (since its 32bits)) (or in this case, just ANGLES!)
+(let ([vec (make-vector (+ ANGLES ANGLEQUAD))])
+  (define ang 0)
+  (for ([i (in-range ANGLEQUAD)])
+    (define value (inexact->exact (floor (* (sin ang) GLOBAL1))))
+    (vector-set! vec i value)
+    (vector-set! vec (+ i ANGLES) value)
+    (vector-set! vec (- (/ ANGLES 2) i) value)
+
+    (vector-set! vec (- ANGLES i) (- value))
+    (vector-set! vec (+ (/ ANGLES 2) i) (- value))
+
+    (set! ang (+ ang anglestep))
+    
+    )
+  (vector-set! vec ANGLEQUAD 65536)
+  (vector-set! vec (* 3 ANGLEQUAD) -65536)
+  (for ([v vec])
+    (write-value-32 v)))
 
 
 })
-
-
-
-
-
