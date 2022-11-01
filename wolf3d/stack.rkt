@@ -1,6 +1,7 @@
 #lang pisemble
 (require (for-syntax syntax/parse))
 
+; register renamer
 (define-syntax (regs stx)
   (syntax-parse stx
     [(_ ([new-reg old-reg:register]...) expr ...)
@@ -77,6 +78,16 @@
   (syntax-parse stx
     [(_ r:register)
      #'{ ldrb r [sp] @16 }]))
+
+; push regs, emit body, pop regs in reverse
+(define-syntax (preserve stx)
+  (syntax-parse stx
+    [(_ [reg:register ...] body)
+     #:with (reg-rev ...)
+     (datum->syntax this-syntax (reverse (syntax->list #'(reg ...))))
+     #'{(PUSH reg) ...
+        body
+        (POP reg-rev) ...}]))
 
 (define-syntax (subr stx)
   ; define a subroutine. create a label for it and push/pop the supplied
