@@ -228,7 +228,8 @@
      ANGLES = 360
      FINEANGLES = 3600
      ANGLEQUAD = (/ 360 4)
-
+     VIEWHEIGHT = 160
+     VIEWWIDTH = 320
      ; if cpu zero then goto main:
      mrs x0 mpidr_el1
      mov x1 @$3
@@ -982,6 +983,7 @@ error_invalid_el0_32:
                   [temp x4] ; temporary / intermediates
                   [tptr x8]
                   [vptr x9] ; video memory pointer
+                  [vptr-bak x10]
                   [row-size x14]
                   ) [x0 x1 x2 x3 x4]
                     {
@@ -991,30 +993,30 @@ error_invalid_el0_32:
     cbnz x0 loop-
     bl get-back-buffer:
     mov vptr x0
-
+    mov vptr-bak x0
     ; ===================
     ; clear screen
     
     ; we do 8 pixels each iteration so
     ; we need 320*200/8 = $1F40 iterations
-    mov temp @$1F40
-    mov x3 @0
-:next
-    str x3 [vptr]
-    str x3 (vptr @8)
-    str x3 (vptr @16)
-    str x3 (vptr @24)
-    add vptr vptr @32
+;;     mov temp @$1F40
+;;     mov x3 @0
+;; :next
+;;     str x3 [vptr]
+;;     str x3 (vptr @8)
+;;     str x3 (vptr @16)
+;;     str x3 (vptr @24)
+;;     add vptr vptr @32
 
-    sub temp temp @1
-    cbnz temp next-
-    mov vptr x0
+;;     sub temp temp @1
+;;     cbnz temp next-
+;;     mov vptr x0
 
     ; end clear screen
     ; ====================
 
     
-    mov x1 vptr
+    mov x1 vptr-bak
     adr x0 debug-flag:
     ldr x0 [x0]
     cbz x0 done+    
@@ -1043,7 +1045,49 @@ error_invalid_el0_32:
       add target target x0
       lsr target target @16
      }))
-   
+
+(subr VgaClearScreen
+      ([vptr x1]
+       [temp x2]       
+       [x x3]
+       [y x4]
+       [ptr x5]
+       [colour w6])
+      [x1] {
+
+   adr ptr palette:
+   mov temp @$1d    
+   lsl temp temp @2
+   add ptr ptr temp
+   ldr colour [ptr]
+   ; ceiling hardcoded to palette $1d for now
+   (/for { mov y @0 } (y lt @(/ VIEWHEIGHT 2)) (inc y) {
+     (/for { mov x @0 } (x lt @$50) (inc x) {                                                   
+         str colour [vptr]
+         str colour [vptr @4]
+         str colour [vptr @8]
+         str colour [vptr @12]
+         add vptr vptr @16
+     })
+
+   })
+
+   ; floor is always $19
+   adr ptr palette:
+   mov temp @$19    
+   lsl temp temp @2
+   add ptr ptr temp
+   ldr colour [ptr]
+   (/for { } (y lt @VIEWHEIGHT) (inc y) {
+     (/for { mov x @0 } (x lt @$50) (inc x) {                                                       str colour [vptr]
+         str colour [vptr @4]
+         str colour [vptr @8]
+         str colour [vptr @12]
+         add vptr vptr @16
+     })
+   })
+
+})
 (subr ThreeDRefresh
       ([vptr x1]
        
@@ -1155,11 +1199,23 @@ error_invalid_el0_32:
   lsr w0 w0 @16
   adr ptr focaltx:
   str w0 [ptr]
+
+  ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "focaltx is " x0)
+  ; end debug
+
   
   ; focalty = viewy >> 16
   lsr w0 w0 @16
   adr ptr focalty:
   str w0 [ptr]
+
+  ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "focalty is " x0)
+  ; end debug
+
   
   ; viewtx = player->x >> 16}
   (_objstruct/x-get temp2 ply)
@@ -1167,13 +1223,29 @@ error_invalid_el0_32:
   adr ptr viewtx:
   str w0 [ptr]
 
+  ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "viewtx is " x0)
+  ; end debug
+
+  
   ; viewty = player->y >> 16}
   (_objstruct/y-get temp2 ply)
   lsr x0 temp2 @16
   adr ptr viewty:
   str w0 [ptr]
 
+  ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "viewty is " x0)
+  ; end debug
+
+  
   ; =================
+
+  bl VgaClearScreen:
+
+  ; ==================
   
 })
 
@@ -1582,7 +1654,20 @@ error_invalid_el0_32:
 :pointBY(write-value-64 100)
 :finished-rendering (write-value-64 0)
 :frame-count (write-value-64 0)
+:execute-once (write-value-64 0)
 
+(define-syntax-parser execute-once
+  ([_ body]
+   #'{
+      ldr x0 execute-once:
+      cbz execute-once-skip:
+      mov x0 @0
+      (preserve [x1] {
+        adr x1 execute-once:
+        str x0 [x1]                        
+      })                
+    :execute-once-skip  
+     }))
   ; to communicate with the video core gpu we need an address that
   ; is 16-byte algined - the lower 4 bits are not set. these are then
   ; used to specify the channel
@@ -1736,5 +1821,19 @@ error_invalid_el0_32:
   (for ([v vec])
     (write-value-32 v)))
 
-
+/= 8
+; palette (only used for backgroudn colours)
+:palette
+(let*
+    ([lines  (file->lines "wolfpal.inc")]
+     [splits  (map (λ (line) (string-split line "RGB")) lines)]
+     [clean  (map (λ (line) (string-replace (string-replace line ")" "") "(" "")) (flatten splits))]
+     [rgbs (map (λ (line) (string-split line ",")) clean)])
+  (for ([rgb rgbs])
+    (write-value (string->number (string-trim (list-ref rgb 2))))
+    (write-value (string->number (string-trim (list-ref rgb 1))))
+    (write-value (string->number (string-trim (list-ref rgb 0))))
+    (write-value 255)))
 })
+
+
