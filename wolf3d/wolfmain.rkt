@@ -317,7 +317,7 @@
     nop
     (load-immediate x0 ANGLES)
     add x0 x1 x0
-    adr x1 costable:
+    adr x1 costable: ; index 0 seems to be 65537 instead of 65536!? check this
     str x0 [x1]
     (debug-str-reg "costable address " x0)
 
@@ -1087,7 +1087,121 @@ error_invalid_el0_32:
      })
    })
 
+   })
+(subr ScalePost
+      ([vptr x1]
+
+       )
+      [x1] {
+  ; scales and draws a strip of pixels from a wall texture
+
+
 })
+
+(subr AsmRefresh
+      ([vptr x1]
+
+       )
+      [x1] {
+  ; this is the actual raycaster
+
+  ; perform angle calcs
+            
+  ; for each X column of the screen ..
+
+  ;  special pushwall handling (TODO)
+            
+  ; begin raycasting loop
+:start-vert-loop
+  nop
+
+:vertentry
+  nop
+
+:passvert  
+  ; todo
+  b start-vert-loop:
+
+:start-horiz-loop
+  nop  
+
+:horizentry            
+  nop
+
+:passhoriz
+  ;; todo
+  b start-horiz-loop:
+
+:loop-next
+
+
+})
+
+(subr WallRefresh
+      ([vptr x1]
+
+       [ptr x2]
+       [temp x2]
+       )
+      [x1] {
+ ; xpartialdown = viewx & (TILEGLOBAL-1)
+  (load-immediate temp (- TILEGLOBAL 1))
+  ;; adr x0 viewx:
+  ;; ldr w0 [x0]
+  ldr w0 viewx:
+  and x0 x0 temp
+  adr ptr xpartialdown:
+  str w0 [ptr]
+
+  ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "xpartialdown is " x0)
+  ; end debug
+
+  ; xpartialup = TILEGLOBAL - xpartialdown (x0)
+  (load-immediate temp TILEGLOBAL)
+  sub x0 temp x0
+  adr ptr xpartialup:
+  str w0 [ptr]
+
+  ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "xpartialup is " x0)
+  ; end debug
+
+  
+  ; ypartialdown = viewy & (TILEGLOBAL-1)
+  (load-immediate temp (- TILEGLOBAL 1))
+  ldr w0 viewy:
+  (debug-str-reg "viewy is " w0)
+  and x0 x0 temp
+  (debug-str-reg "result is " w0)
+  adr ptr ypartialdown:
+  str w0 [ptr]
+
+  ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "ypartialdown is! " x0)
+  ; end debug
+
+  
+  ; ypartialup = TILEGLOBAL - ypartialdown (x0)
+  (load-immediate temp TILEGLOBAL)
+  sub x0 temp x0
+  adr ptr ypartialup:
+  str w0 [ptr]
+
+  ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "ypartialup is " x0)
+  ; end debug
+
+
+  
+;  bl AsmRefresh:
+  ;bl ScalePost:
+})
+
 (subr ThreeDRefresh
       ([vptr x1]
        
@@ -1155,14 +1269,24 @@ error_invalid_el0_32:
   (_objstruct/y-get temp2 ply)
   (debug-str-reg "player->y " temp2)
   sub x0 temp2 temp3
-  adr ptr viewx:
+  adr ptr viewy:
   str w0 [ptr]
 
   ; debug
   ldr w0 [ptr]
   (debug-str-reg "viewy is " x0)
   ; end debug
-  
+
+  ; focalty = viewy >> 16
+  lsr w0 w0 @16
+  adr ptr focalty:
+  str w0 [ptr]
+
+  ; debug
+  ldr w0 [ptr]
+  (debug-str-reg "focalty is " x0)
+  ; end debug
+
   ; viewcos = costable[viewangle]
   ; tmep = viewangle
   ; costable is a pointer
@@ -1204,18 +1328,7 @@ error_invalid_el0_32:
   ldr w0 [ptr]
   (debug-str-reg "focaltx is " x0)
   ; end debug
-
   
-  ; focalty = viewy >> 16
-  lsr w0 w0 @16
-  adr ptr focalty:
-  str w0 [ptr]
-
-  ; debug
-  ldr w0 [ptr]
-  (debug-str-reg "focalty is " x0)
-  ; end debug
-
   
   ; viewtx = player->x >> 16}
   (_objstruct/x-get temp2 ply)
@@ -1244,7 +1357,7 @@ error_invalid_el0_32:
   ; =================
 
   bl VgaClearScreen:
-
+  bl WallRefresh:
   ; ==================
   
 })
@@ -1751,6 +1864,10 @@ error_invalid_el0_32:
 :viewsin (write-value-32 0)
 :viewcos (write-value-32 0)
 :vbufPitch (write-value-32 320)
+:xpartialup (write-value-32 0)
+:xpartialdown (write-value-32 0)
+:ypartialup (write-value-32 0)
+:ypartialdown (write-value-32 0)
 ; these next ones are shorts but we'll store them as 4 bytes 
 :viewangle (write-value-32 0)
 :midangle (write-value-32 0)
@@ -1782,7 +1899,9 @@ error_invalid_el0_32:
       (vector-set! vec (- halfview 1 i) ang)
       (vector-set! vec (+ halfview i) nang)))
   (for ([v vec])
-    (write-value-16 v)))
+;    (displayln v)
+    (write-value-16 v)
+    ))
 
 (define GLOBAL1 (arithmetic-shift 1 16))
 ; next up is the tangent table
