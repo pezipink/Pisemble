@@ -311,6 +311,14 @@
      (match-lambda
        [(list bin) bin])
      ]
+    ['rn-rd
+     (match-lambda
+       [(list bin rd rn)
+        (let ([rn-shifted (arithmetic-shift rn 5)])
+          (bitwise-ior-n rd rn-shifted bin))])
+     (match-lambda
+       [(list bin) bin])
+     ]
     ['rm-rn
      (match-lambda
        [(list bin rn rm)
@@ -381,6 +389,7 @@
     ['add 'reg-reg-reg   'rm-rn-rd                           #b10001011000000000000000000000000 b31 #f]
     ['adr 'reg-lbl       'immlo-immhi-rd                     #b00010000000000000000000000000000 #f #f]
     ['and 'reg-reg-reg   'rm-rn-rd                           #b10001010000000000000000000000000 b31 #f ]
+    ['asr 'reg-reg-imm   'immr6-rn-rd                        #b10010011010000001111110000000000 lsr-imm-special #f]
     ['b   'lbl           'imm26                              #b00010100000000000000000000000000 #f #f]
 
     ['b.eq 'lbl          'imm19                              #b01010100000000000000000000000000 #f #f] ; equal Z = 1
@@ -464,6 +473,7 @@
 
     ['sub 'reg-reg-imm   'imm12-rn-rd                        #b11010001000000000000000000000000 b31 #f]
     ['sub 'reg-reg-reg   'rm-rn-rd                           #b11001011000000000000000000000000 b31 #f]
+    ['sxtw 'reg-reg      'rn-rd                              #b10010011010000000111110000000000 #f  #f]
     ['wfe 'none          'none                               #b11010101000000110010000001011111 #f #f]))))
 
 (struct context (data location minl maxl jump-table branches-waiting linker-labels) #:mutable #:transparent)
@@ -800,9 +810,9 @@
     (pattern x:id
              #:do [(define sym (syntax-e (attribute x)))
                    (define ocs
-                     (list 'add 'adr 'and 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
+                     (list 'add 'adr 'and 'asr 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
                            'bl 'cbz 'cbnz 'csel 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'nop
-                           'orr 'ret 'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'wfe))]
+                           'orr 'ret 'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'sxtw 'wfe))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
     #:description "register"

@@ -1037,13 +1037,15 @@ error_invalid_el0_32:
 (define-syntax-parser FixedMul
   ; these should be x registers only, cba to put a check in
   ; trashes x0
+  ; DO NOT USE x0 AS TARGET!
+  ; make sure you SIGN ENTEND into x and y first!
   ([_ target:register x:register y:register]
    #'{
       ; TODO: madd here when i implement it
       mul target x y
       (load-immediate x0 $8000)
       add target target x0
-      lsr target target @16
+      asr target target @16 
      }))
 
 (subr VgaClearScreen
@@ -1101,40 +1103,320 @@ error_invalid_el0_32:
 (subr AsmRefresh
       ([vptr x1]
 
+       [xstep w2]
+       [ystep w3]
+       [xpartial w4]
+       [ypartial w5]
+       [ptr x6]
+       [xtemp x7]
+
+       [local-pixx w8]
+       [wtemp w9]
+
        )
       [x1] {
+  ; NOTE: this function uses x10+ for all item temporaries, except the named ones above
+  ; (and our old friend x0 of course)
+ 
   ; this is the actual raycaster
 
-  ; perform angle calcs
-            
+  (debug-str "enter asm referesh" #t)          
+  mov xstep @0
+  mov ystep @0
+  mov xpartial @0
+  mov ypartial @0
+
   ; for each X column of the screen ..
+  (/for {mov local-pixx @0} (local-pixx lt  @1) (inc local-pixx) {
+    (debug-str "pixx loop" #t)
+    ; store global pixx (keep in sync with loop counter)
+    adr ptr pixx:
+    str local-pixx [ptr]
+    ; perform angle calcs
 
-  ;  special pushwall handling (TODO)
+    ;w0 = midangle + pixelangle[pixx]
+    adr ptr pixelangle:    
+    mov wtemp local-pixx
+    lsl wtemp wtemp @1
+    add ptr ptr wtemp 
+    ldrh w0 [ptr]
+;    (debug-str-reg "angle1 = " w0)
+    ldr wtemp midangle:
+    add w10 w0 wtemp
+    ;(debug-str-reg "angle2 = " w0)
+
+    (/when (w10 lt @0)  {
+      (debug-str "angl < 0" #t)                  
+    })
+
+    (/when (w10 ge @3600)  {
+      (debug-str "angl >= 3600" #t)                  
+    })
+
+    (/cond
+     ([(w10 lt @900)
+       {
+         (debug-str "angl < 900" #t)
+         mov w0 @1
+         adr ptr xtilestep:
+         str w0 [ptr]
+         ; TODO: need movn / neg
+         mov w0 @0
+         sub w0 w0 @1  ; -1
+         adr ptr ytilestep:
+         str w0 [ptr]
+         ; xstep = finetangent[900-1-angl]
+         adr ptr finetangent:
+         mov w11 @899 ; w11 index
+         sub w11 w11 w10 ; index -= angl
+         (debug-str-reg "index " w11)
+         lsl w11 w11 @2  ; 32 bit
+         add ptr ptr w11
+         ldr xstep [ptr]
+         (debug-str-reg "xstep " xstep)
+
+         ;ystep = -finetangent[angl]
+         mov w11 w10 ; w11 = angl
+         adr ptr finetangent:
+         lsl w11 w11 @2
+         add ptr ptr w11
+         ldr ystep [ptr]
+         sub ystep wzr ystep
+         (debug-str-reg "ystep " ystep)
+         ; xpartial = xpartialup
+         ldr xpartial xpartialup:
+         (debug-str-reg "xpartial " xpartial)
+         ; ypartial = ypartialdown
+         ldr ypartial ypartialdown:
+         (debug-str-reg "ypartial " ypartial)
+         
+       }]
+      [(w10 lt @1800) {(debug-str "angl < 1800" #t) }]
+      [(w10 lt @2700) {(debug-str "angl < 2700" #t) }]
+      [(w10 lt @3600) {(debug-str "angl < 3600" #t) }]))
+
+    ;yintercept = FixedMul(ystep,xpartial) + viewy
+    ; make sure these are in x registers first
+    ; sign extend to 64 bits
+
+    sxtw x10 ystep
+    sxtw x11 xpartial
+    (FixedMul x12 x10 x11)
+    mov x0 x12
+    (debug-str-reg "fixed mul res " w0)
+    ldr wtemp viewy:
+    add w0 w0 wtemp
+    adr ptr yintercept:
+    str w0 [ptr]
+    (debug-str-reg "yintercept " w0)
+    mov w12 w0 ; w12 = yintercept (used in a moment)
+    
+    ;xtile = focaltx + xtilestep
+    ldr w10 focaltx:
+    ldr w11 xtilestep:
+    add w10 w10 w11
+    adr ptr xtile:
+    str w10 [ptr]
+    (debug-str-reg "xtile " w10)
+    
+    ; xspot = (xtile << 6) + (yintercept >> 16)
+    lsl w10 w10 @6
+    lsr w12 w12 @16
+    add w0 w10 w12
+    adr ptr xspot:
+    str w0 [ptr]
+    (debug-str-reg "xspot " w0)
+
+    ;xintercept = FixedMul(xstep,ypartial) + viewx
+    sxtw x10 xstep
+    sxtw x11 ypartial
+    (FixedMul x12 x10 x11)
+    mov x0 x12
+    (debug-str-reg "fixed mul res " w0)
+    ldr wtemp viewx:
+    add w0 w0 wtemp
+    adr ptr xintercept:
+    str w0 [ptr]
+    (debug-str-reg "xintercept " w0)
+    mov w12 w0 ; w12 = xintercept (used in a moment)
+
+    ;ytile = focalty + ytilestep
+    ldr w10 focalty:
+        (debug-str-reg "focalty " w10)
+    ldr w11 ytilestep:
+            (debug-str-reg "ytilestep " w11)
+    add w10 w10 w11
+    adr ptr ytile:
+    str w10 [ptr]
+    (debug-str-reg "ytile " w10)
+    
+    ; yspot = ((xintercept >> 16) << 6) + ytile
+
+    lsr w12 w12 @16
+    lsl w12 w12 @6
+    add w0 w10 w12
+    adr ptr yspot:
+    str w0 [ptr]
+    (debug-str-reg "yspot " w0)
+
+    adr ptr texdelta:
+    mov x0 @0
+    str w0 [ptr]
+    
+
+    ;  special pushwall handling (TODO)
             
-  ; begin raycasting loop
-:start-vert-loop
-  nop
+    ; begin raycasting loop
+  :start-vert-loop
+    nop
+    ; if ytilestep = -1 && (yintercept>>16 <= ytile) goto horizentry
+    ; if ytilestep = 1 && (yintercept>>16 >= ytile) goto horizentry
+    ldr w10 ytilestep:
+    ldr w11 yintercept:
+    asr w11 w11 @16
+    (debug-str-reg "asr " w11)
+    mov w12 @0
+    sub w12 w12 @1 ; w12 = -1
+    ldr w13 ytile:
+    ; if ytilestep = -1 && (yintercept>>16 <= ytile) goto horizentry
+    (/when (/and (w10 eq w12) (w11 le w13)) {
+      (debug-str "check 1 true" #t)
+      b horizentry:                                             
+      })
+    ; if ytilestep = 1 && (yintercept>>16 >= ytile) goto horizentry
+    (/when (/and (w10 eq @1) (w11 ge w13)) {
+      (debug-str "check 2 true" #t)
+      b horizentry:                                             
+    })
+  :vertentry
+    ; TODO: there's an OOB check we don't need right now
+    ; if(xspot > maparea) break;
+    (debug-str "in vertentry" #t)
+    ; tilehit = tilemap[xspot]
+    adr ptr tilemap:
+    ldr wtemp xspot:
+    add ptr ptr wtemp
+    ldrb w0 [ptr]
+    (debug-str-reg "tilehit " w0)
+    adr ptr tilehit:
+    str w0 [ptr]
 
-:vertentry
-  nop
+    ;if tilehit
+    (/when (w0 ne @0) {
 
-:passvert  
-  ; todo
-  b start-vert-loop:
+      ;TODO: a bunch of door and pushwall stuff
+      (debug-str-reg "HIT V " w0)                 
+      ; TODO: calcs and hithoriz wall                 
+      b loop-next+
+    })                   
 
-:start-horiz-loop
-  nop  
+  :passvert  
 
-:horizentry            
-  nop
+    ;; todo spotvis update when we take on sprites
+    ;xtile += xtilestep
+    ldr w10 xtile:
+    ldr w11 xtilestep:
+    add w10 w10 w11
+    adr ptr xtile:
+    str w10 [ptr]
 
-:passhoriz
-  ;; todo
-  b start-horiz-loop:
+    ;yintercept += ystep
+    ldr w12 yintercept:
+    ;ldr w11 ystep:
+    add w10 w12 ystep
+    adr ptr yintercept:
+    str w10 [ptr]
 
-:loop-next
+    ; xspot = (xtile << 6) + (yintercept >> 16)
+    mov w12 w10
+    ldr w10 xtile:
+    lsl w10 w10 @6
+    lsr w12 w12 @16
+    add w0 w10 w12
+    adr ptr xspot:
+    str w0 [ptr]
+    (debug-str-reg "xspot v " w0)
 
+    b start-vert-loop:
 
+  :start-horiz-loop
+    ; if xtilestep = -1 && (xintercept>>16 <= xtile) goto vertentry
+    ; if xtilestep = 1 && (xintercept>>16 >= xtile) goto vertentry
+    ldr w10 xtilestep:
+    ldr w11 xintercept:
+    asr w11 w11 @16
+    mov w12 @0
+    sub w12 w12 @1 ; w12 = -1
+    ldr w13 xtile:
+    ; if xtilestep = -1 && (xintercept>>16 <= xtile) goto vertentry
+    (/when (/and (w10 eq w12) (w11 le w13)) {
+      (debug-str "check 3 true" #t)
+      b vertentry:                                             
+      })
+    ; if xtilestep = 1 && (xintercept>>16 >= xtile) goto vertentry
+    (/when (/and (w10 eq @1) (w11 ge w13)) {
+      (debug-str "check 4 true" #t)
+      b vertentry:                                             
+    })
+  :horizentry
+    (debug-str "in horizentry" #t)
+    ; tilehit = tilemap[yspot]
+    adr ptr tilemap:
+    ldr wtemp yspot:
+    add ptr ptr wtemp
+    ldrb w0 [ptr]
+    (debug-str-reg "tilehit " w0)
+    adr ptr tilehit:
+    str w0 [ptr]
+
+    ;if tilehit
+    (/when (w0 ne @0) {
+
+      ;TODO: a bunch of door and pushwall stuff
+      (debug-str-reg "HIT H " w0)                 
+      ; TODO: calcs and hithoriz wall                 
+      b loop-next+
+    })                   
+
+    
+  :passhoriz
+    ;; todo spotvis update when we take on sprites
+    ;ytile += ytilestep
+    ldr w10 ytile:
+    (debug-str-reg "ytile " w10)
+    ldr w11 ytilestep:
+    (debug-str-reg "ytilestep " w11)
+    add w10 w10 w11
+    adr ptr ytile:
+    str w10 [ptr]
+    (debug-str-reg "ph ytile " w10)
+    ;xintercept += xstep
+    ldr w12 xintercept:
+    (debug-str-reg "xintercept " w12)
+    ;ldr w11 xstep:
+    (debug-str-reg "xstep " xstep)
+    add w10 w12 xstep
+    adr ptr xintercept:
+    str w10 [ptr]
+    (debug-str-reg "ph xintercept " w10)
+    ; yspot = ((xintercept >> 16) << 6) + ytile
+    mov w12 w10
+    asr w12 w12 @16
+    lsl w12 w12 @6
+    ldr w10 ytile:
+    add w0 w10 w12
+    adr ptr yspot:
+    str w0 [ptr]
+    (debug-str-reg "yspot h " w0)
+
+    
+    b start-horiz-loop:
+
+  :loop-next
+
+  })
+
+    (debug-str "exit asm referesh" #t)          
 })
 
 (subr WallRefresh
@@ -1198,7 +1480,7 @@ error_invalid_el0_32:
 
 
   
-;  bl AsmRefresh:
+  bl AsmRefresh:
   ;bl ScalePost:
 })
 
@@ -1466,44 +1748,6 @@ error_invalid_el0_32:
   
 :quit})
 
-
-;; (define-syntax-parser /when
-;;   [(_ condition:expr body:expr)
-;;    (let ([true-start (gen-label "when-true")]
-;;          [false-start (gen-label "when-false")])
-;;      (with-syntax
-;;        ([true-label (format-label true-start)]
-;;         [true-target (format-target true-start '+)]
-;;         [false-label (format-label false-start)]
-;;         [false-target (format-target false-start '+)]
-;;         )
-;;        #'{
-;;           ; jump away when the condition is false
-;;            (compile-inverse-condition condition false-target true-target)
-;;            true-label
-;;              body
-;;            false-label 
-;;            }))])
-
-;; (define-syntax-parser /if
-;;   [(_ condition:expr then-body:expr else-body:expr)
-;;    (let ([then-start (gen-label "then-start")]
-;;          [else-start (gen-label "else-start")]
-;;          [if-end (gen-label "if-end")])
-;;      (with-syntax
-;;        ([then-label (string->symbol (format ":~a" then-start))]
-;;         [then-target (string->symbol (format "~a+" then-start))]
-;;         [else-label (format-label else-start)]
-;;         [else-target (format-target else-start '+)]
-;;         [end-label (string->symbol (format ":~a" if-end))]
-;;         [end-target (string->symbol (format "~a+" if-end))])
-;;         #'{
-;;            (compile-condition condition then-target)
-;;            else-label  else-body
-;;            b end-target
-;;            then-label then-body
-;;            end-label
-;;           }))])
 
 ; //////////////////////////////////////////////
 ; WOLFENSTEIN CODE 
@@ -1868,14 +2112,27 @@ error_invalid_el0_32:
 :xpartialdown (write-value-32 0)
 :ypartialup (write-value-32 0)
 :ypartialdown (write-value-32 0)
-; these next ones are shorts but we'll store them as 4 bytes 
+:xintercept (write-value-32 0)
+:yintercept (write-value-32 0)
+:pixx (write-value-32 0)
+:texdelta (write-value-32 0)
+; these next ones are shorts but we'll store them as 4 bytes
+:tilehit (write-value-32 0)
 :viewangle (write-value-32 0)
 :midangle (write-value-32 0)
 :angle (write-value-32 0)
+:xstep (write-value-32 0)
+:ystep (write-value-32 0)
+:xtile (write-value-32 0)
+:ytile (write-value-32 0)
+:xtilestep (write-value-32 0)
+:ytilestep (write-value-32 0)
 :viewtx (write-value-32 0)
 :viewty (write-value-32 0)
 :focaltx (write-value-32 0)
 :focalty (write-value-32 0)
+:xspot (write-value-32 0)
+:yspot (write-value-32 0)
 ; end shorts
 
 (define MINDIST #x5800)
