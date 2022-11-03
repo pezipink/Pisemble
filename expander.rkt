@@ -474,6 +474,9 @@
     ['sub 'reg-reg-imm   'imm12-rn-rd                        #b11010001000000000000000000000000 b31 #f]
     ['sub 'reg-reg-reg   'rm-rn-rd                           #b11001011000000000000000000000000 b31 #f]
     ['sxtw 'reg-reg      'rn-rd                              #b10010011010000000111110000000000 #f  #f]
+
+    ['udiv 'reg-reg-reg  'rm-rn-rd                           #b10011010110000000000100000000000 b31 #f]
+
     ['wfe 'none          'none                               #b11010101000000110010000001011111 #f #f]))))
 
 (struct context (data location minl maxl jump-table branches-waiting linker-labels) #:mutable #:transparent)
@@ -812,7 +815,7 @@
                    (define ocs
                      (list 'add 'adr 'and 'asr 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
                            'bl 'cbz 'cbnz 'csel 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'nop
-                           'orr 'ret 'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'sxtw 'wfe))]
+                           'orr 'ret 'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'sxtw 'udiv 'wfe))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
     #:description "register"

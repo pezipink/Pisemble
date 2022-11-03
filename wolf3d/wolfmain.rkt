@@ -232,6 +232,7 @@
      VIEWWIDTH = 320
      TEXTUREMASK = 4032
      TEXTUREFROMFIXEDSHIFT = 4
+     MINDIST = $5800
      ; if cpu zero then goto main:
      mrs x0 mpidr_el1
      mov x1 @$3
@@ -316,7 +317,7 @@
     ; here we want to do sintable+90 (360/4)    
     ; but since they are 4 bytes each we can
     ; simply use 360 since we'd have to << 2 anway
-    nop
+
     (load-immediate x0 ANGLES)
     add x0 x1 x0
     adr x1 costable: ; index 0 seems to be 65537 instead of 65536!? check this
@@ -1167,6 +1168,10 @@ error_invalid_el0_32:
   adr ptr lasttexture:
   str texture [ptr]
 
+  
+  bl CalcHeight:
+  (debug-str-reg "calcheight " x0)
+  
   ; wallheight[pixx] = CalcHeight()  ; TODO we don't have wallheight[] yet
 
 
@@ -1223,9 +1228,52 @@ error_invalid_el0_32:
 
        )
       [x1] {
+;  (debug-str "in calcheight " #t)
+  ;fixed z = FixedMul(xintercept - viewx, viewcos) - FixedMul(yintercept - viewy, viewsin);
+  ldr w10 xintercept:
+  ldr w11 viewx:                
+  ldr w12 viewcos:
+;  (debug-str-reg "xintercept " w10)
+;  (debug-str-reg "viewx " w11)
+;  (debug-str-reg "viewcos " w12)
+  sub w10 w10 w11
+  sxtw x10 w10
+  sxtw x12 w12
+  (FixedMul x20 x10 x12)
+;  (debug-str-reg "fixed1 " x20)
+  
+  ldr w10 yintercept:
+  ldr w11 viewy:                
+  ldr w12 viewsin:
+  sub w10 w10 w11
+  sxtw x10 w10
+  sxtw x12 w12
+  (FixedMul x21 x10 x12)
+;  (debug-str-reg "fixed2 " x21)
+  ; x10 = z
+  sub w10 x20 x21
+ ; (debug-str-reg "z " w10)
+  ; if (z < mindist) z = mindist
+  mov x11 @MINDIST
+  (/when (w10 lt x11) { 
+    mov w10 @MINDIST
+  })
 
+  ; int height = heightnumberator / (z>>8)
+  nop
+  asr w10 w10 @8
+  ldr w11 heightnumerator:
+;  (debug-str-reg "asr z " w10)
+;  (debug-str-reg "numerator " w11)
+  udiv w10 w11 w10
+;  (debug-str-reg "udiv " w10)
+  
+ ; pretty sure this code isn't used/*
+ ;   if(height < min_wallheight)
+ ;       min_wallheight = height;
+  ;   */
 
-
+  mov x0 x10 
 })
 
 (subr AsmRefresh
@@ -1396,7 +1444,7 @@ error_invalid_el0_32:
             
     ; begin raycasting loop
   :start-vert-loop
-    nop
+
     ; if ytilestep = -1 && (yintercept>>16 <= ytile) goto horizentry
     ; if ytilestep = 1 && (yintercept>>16 >= ytile) goto horizentry
     ldr w10 ytilestep:
@@ -2299,7 +2347,7 @@ error_invalid_el0_32:
 :yspot (write-value-32 0)
 ; end shorts
 
-(define MINDIST #x5800)
+
 (define viewwidth 320)
 (define halfview (/ viewwidth 2))
 (define facedist (+ 0.0 #x5700 MINDIST))
