@@ -230,6 +230,8 @@
      ANGLEQUAD = (/ 360 4)
      VIEWHEIGHT = 160
      VIEWWIDTH = 320
+     TEXTUREMASK = 4032
+     TEXTUREFROMFIXEDSHIFT = 4
      ; if cpu zero then goto main:
      mrs x0 mpidr_el1
      mov x1 @$3
@@ -1097,6 +1099,132 @@ error_invalid_el0_32:
       [x1] {
   ; scales and draws a strip of pixels from a wall texture
 
+  (debug-str "enter scalepost " #t)
+  (debug-str "exit scalepost " #t)            
+})
+
+(subr HitHorizWall
+      ([vptr x1]
+
+       [wallpic w2]
+       [texture w3]
+       [ptr x4]
+       )
+      [x1] {
+  (debug-str "in hithorizwall" #t)
+  ;texture = ((xintercept+texdelta)>>TEXTUREFROMFIXEDSHIFT)&TEXTUREMASK;  
+  ldr w10 xintercept:
+  ldr w11 texdelta:
+  add w10 w10 w11
+  asr w10 w10 @TEXTUREFROMFIXEDSHIFT
+  mov w12 @TEXTUREMASK
+  and w10 w10 w12
+  mov texture w10
+  (debug-str-reg "texture " w10)
+
+  ;if ytilestep == -1
+  ldr w10 ytilestep:
+  mov w11 @0
+  sub w11 w11 @1 ; -1
+  (/if (w10 eq w11)
+       {
+         ;yintercept += TILEGLOBAL;
+         ldr w10 yintercept:
+         (load-immediate w11 TILEGLOBAL)
+         add w10 w10 w11
+         adr ptr yintercept:
+         str w10 [ptr]
+       }
+       ;else 
+       {
+         ; texture = TEXTUREMASK-texture
+         mov w11 @TEXTUREMASK
+         sub texture w11 texture
+       })
+  
+  ;if(lastside!=-1) ScalePost();
+  ldr w10 lastside:
+  mov w11 @0
+  sub w11 w11 @1
+  (/when (w10 ne w11) { bl ScalePost: })
+
+  ;lastside = 0
+  mov x10 @0
+  adr ptr lastside:
+  str w10 [ptr]
+
+  ;lastintercept = ytile
+  ldr w10 ytile:
+  adr ptr lastintercept:
+  str w10 [ptr]
+
+  ;lasttilehit = tilehit
+  ldr w10 tilehit:
+  adr ptr lasttilehit:
+  str w10 [ptr]
+  
+  ;lasttexture = texture
+  adr ptr lasttexture:
+  str texture [ptr]
+
+  ; wallheight[pixx] = CalcHeight()  ; TODO we don't have wallheight[] yet
+
+
+  ;postx = pixx
+  ldr w10 pixx:
+  adr ptr postx:
+  str w10 [ptr]
+
+
+  ;; ;wallpic = horizwall[tilehit]  ;
+  ldr w10 tilehit:
+  lsl w10 w10 @1
+  adr ptr horizwall:
+  add ptr ptr w10
+  ldrh wallpic [ptr]
+  (debug-str-reg "wallpix " wallpic)
+
+  ;postsource = PM_GetTexture(wallpic) + texture
+  ; this is a bit different for us since we don't
+  ; have a page manager and are not using palette indexes.
+
+  ; we need to find the start of the image data for wallpic index
+  ; then offset into it texture << 2
+
+  ldr ptr textures-address:
+  mov w10 @$4000      ; texture size
+  mul w11 w10 wallpic ; size * index
+  add ptr ptr w11     ; start+offset
+
+  ; now we are pointing at the start of image
+  ; move along texture * 4 bytes
+  lsl w10 texture @2
+  add ptr ptr w10
+
+  mov x10 ptr
+  adr ptr postsource:
+  str x10 [ptr]
+
+  
+})
+
+(subr HitVertWall
+      ([vptr x1]
+
+       )
+      [x1] {
+  
+
+
+})
+
+(subr CalcHeight
+      ([vptr x1]
+
+       )
+      [x1] {
+
+
 
 })
 
@@ -1306,7 +1434,7 @@ error_invalid_el0_32:
 
       ;TODO: a bunch of door and pushwall stuff
       (debug-str-reg "HIT V " w0)                 
-      ; TODO: calcs and hithoriz wall                 
+      ; TODO: calcs and hitvertwall wall                 
       b loop-next+
     })                   
 
@@ -1374,7 +1502,21 @@ error_invalid_el0_32:
 
       ;TODO: a bunch of door and pushwall stuff
       (debug-str-reg "HIT H " w0)                 
-      ; TODO: calcs and hithoriz wall                 
+      ;yintercept=ytile<<TILESHIFT;
+      ldr w10 ytile:
+      lsl w10 w10 @TILESHIFT
+      adr ptr yintercept:
+      str w10 [ptr]
+      
+      ;xtile = (short) (xintercept >> TILESHIFT);
+      ldr x10 xintercept:
+      asr x10 x10 @TILESHIFT
+      adr ptr xtile:
+      str w10 [ptr]
+
+      bl HitHorizWall:
+      
+      ;break
       b loop-next+
     })                   
 
@@ -1478,8 +1620,11 @@ error_invalid_el0_32:
   (debug-str-reg "ypartialup is " x0)
   ; end debug
 
-
-  
+  ; lastside = -1
+  mov x0 @0
+  sub x0 x0 @1
+  adr ptr lastside:
+  str w0 [ptr]
   bl AsmRefresh:
   ;bl ScalePost:
 })
@@ -1789,7 +1934,6 @@ error_invalid_el0_32:
   [pad             4] ; I'm adding this so it is 8 byte aligned (72 bytes)
   ))
 
-
 (subr setup-game-level
       ([raw-ptr x1]
        [lvl-ptr x2]
@@ -1970,9 +2114,22 @@ error_invalid_el0_32:
 /= 8
 :player  (write-value-64 0)  ; objstruct*
 
+/= 8
+:horizwall
+(write-value-16 0)
+(for ([i (in-range 1 64)])
+  (write-value-16 (* (- i 1) 2)))
 
+/= 8
+:vertwall
+(write-value-16 0)
+(for ([i (in-range 1 64)])
+  (write-value-16 (+ (* (- i 1) 2) 1)))
 
-
+/= 8
+:wallheight
+(for ([x (in-range 320)])
+  (write-value-32 0))
 
   ; the following values are used for loading 64 bit addresses/values via LDR(literal)
   ; and they must be 64 bit aliged otherwise the CPU faults!
@@ -2099,6 +2256,8 @@ error_invalid_el0_32:
 ; wolf lets you resize the viewport and thus it recalcualtes various projection bits
 ; our version is hardcoded at 320 * 160 (no border) so we can calculate the bits at compile time
 /= 8
+;wolf uses a lot of global state!
+:postsource (write-value-64 0) ; pointer to texture column data
 :debug-flag (write-value-64 1)
 :focallength (write-value-32 $5700)
 :scale (write-value-32 128)
@@ -2116,6 +2275,11 @@ error_invalid_el0_32:
 :yintercept (write-value-32 0)
 :pixx (write-value-32 0)
 :texdelta (write-value-32 0)
+:lastside (write-value-32 0)
+:lasttilehit (write-value-32 0)
+:lasttexture (write-value-32 0)
+:lastintercept (write-value-32 0)
+:postx (write-value-32 0)
 ; these next ones are shorts but we'll store them as 4 bytes
 :tilehit (write-value-32 0)
 :viewangle (write-value-32 0)
