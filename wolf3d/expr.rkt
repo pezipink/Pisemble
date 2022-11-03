@@ -161,7 +161,7 @@
         [else-label (format-label else-start)]
         [else-target (format-target else-start '+)]
         [end-label (format-label if-end)]
-        [end-target (format-label if-end '+)])
+        [end-target (format-target if-end '+)])
         #'{
            (compile-condition condition then-target)
          else-label
