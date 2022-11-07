@@ -268,5 +268,5 @@
         #'{
          start-label
            body
-           (/when condition {b start-label})
+           (/when condition {b start-target})
           }))])
