@@ -358,6 +358,7 @@
 (define opcode-metadata
   (let ([b31             #b01111111111111111111111111111111]
         [b30             #b10111111111111111111111111111111]
+        [sxt             #b01111111101111111111111111111111] ; N and 31 for SXTB SXTH
         [lsl-imm-special #b01111111100111110111111111111111];here we splat 'N', sf, and the upper bits of immr and imms
         [lsl-in-range
          (λ (imm is32?)
@@ -473,7 +474,10 @@
 
     ['sub 'reg-reg-imm   'imm12-rn-rd                        #b11010001000000000000000000000000 b31 #f]
     ['sub 'reg-reg-reg   'rm-rn-rd                           #b11001011000000000000000000000000 b31 #f]
+    ['sxtb 'reg-reg      'rn-rd                              #b10010011010000000001110000000000 sxt #f]
+    ['sxth 'reg-reg      'rn-rd                              #b10010011010000000011110000000000 sxt #f]
     ['sxtw 'reg-reg      'rn-rd                              #b10010011010000000111110000000000 #f  #f]
+    
 
     ['udiv 'reg-reg-reg  'rm-rn-rd                           #b10011010110000000000100000000000 b31 #f]
 
@@ -815,7 +819,7 @@
                    (define ocs
                      (list 'add 'adr 'and 'asr 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
                            'bl 'cbz 'cbnz 'csel 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'nop
-                           'orr 'ret 'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'sxtw 'udiv 'wfe))]
+                           'orr 'ret 'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'sxtb 'sxth 'sxtw 'udiv 'wfe))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
     #:description "register"

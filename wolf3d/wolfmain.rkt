@@ -233,6 +233,7 @@
      TEXTUREMASK = 4032
      TEXTUREFROMFIXEDSHIFT = 4
      MINDIST = $5800
+     TEXTURESIZE = (arithmetic-shift 1 6)
      ; if cpu zero then goto main:
      mrs x0 mpidr_el1
      mov x1 @$3
@@ -419,8 +420,8 @@
      mov x28 @105  ; 130 for 2d pics, 105 for textures
      mov x27 @60
 
-          mov x1 @84
-;     bl render-pic:
+          mov x1 @15
+          ;     bl render-pic:
 ;     bl dump-regs:
      bl update-gfx:
  :loop
@@ -983,7 +984,8 @@ error_invalid_el0_32:
 ; core render loop
 ; clear screen then call other rendering functions
 (subr update-gfx  (
-                  [temp x4] ; temporary / intermediates
+                   [temp x4] ; temporary / intermediates
+                    [wtemp w5]
                   [tptr x8]
                   [vptr x9] ; video memory pointer
                   [vptr-bak x10]
@@ -1018,16 +1020,28 @@ error_invalid_el0_32:
     ; end clear screen
     ; ====================
 
-    
-    mov x1 vptr-bak
-    adr x0 debug-flag:
-    ldr x0 [x0]
-    cbz x0 done+    
-    bl ThreeDRefresh:   ; raycaster
-    mov temp @0
-    adr x0 debug-flag:
-    str temp [x0]
 
+    ; only once code 
+    ;; adr x0 debug-flag:
+    ;; ldr x0 [x0]
+    ;; cbz x0 done+
+    mov x1 vptr-bak
+    (preserve [x4 x8 x9 x10 x14] {
+    bl ThreeDRefresh:   ; raycaster
+    })
+       ;; mov temp @0
+    ;; adr x0 debug-flag:
+    ;; str temp [x0]
+
+    ldr tptr player:
+
+
+    (_objstruct/angle-get wtemp tptr)    
+    add wtemp wtemp @1
+    (/when (wtemp ge @360) {mov wtemp @0})
+    (_objstruct/angle-set wtemp tptr) 
+    
+    
     :done
     ;signal render has finished
     mov temp @1
@@ -1036,7 +1050,8 @@ error_invalid_el0_32:
 
 
     b loop-
-    })
+})
+
 (define-syntax-parser FixedMul
   ; these should be x registers only, cba to put a check in
   ; trashes x0
@@ -1096,12 +1111,127 @@ error_invalid_el0_32:
 (subr ScalePost
       ([vptr x1]
 
+       [ywcount w2]
+       [yoffs w3]
+       [yw w4]
+       [yd w5]
+       [yendoffs w6]
+       [col w7]
+       [ptr x8]
        )
       [x1] {
   ; scales and draws a strip of pixels from a wall texture
 
-  (debug-str "enter scalepost " #t)
-  (debug-str "exit scalepost " #t)            
+;  (debug-str "enter scalepost " #t)
+
+  ;ywcount = yd = wallheight[postx] >> 3;
+  adr ptr wallheight:
+  ldr w10 postx:
+  lsl w10 w10 @2
+  add ptr ptr w10
+  ldr w10 [ptr]
+;  (debug-str-reg "wallheight[postx] " w10)
+  lsr w10 w10 @3
+;  (debug-str-reg ">>3 " w10)
+  mov ywcount w10
+  mov yd w10
+  (/when (yd le @0) { mov yd @100 })
+
+  ;yoffs = (viewheight / 2 - ywcount) * vbufPitch;
+  mov w10 @(/ VIEWHEIGHT 2)
+  sub w10 w10 ywcount
+  ldr w11 vbufPitch:
+  mul yoffs w10 w11
+;  (debug-str-reg "yoffs " yoffs)
+  (/when (yoffs lt @0) { mov yoffs @0 })
+
+  ; yoffs += postx
+  ldr w10 postx:
+  add yoffs yoffs w10
+;  (debug-str-reg "yoffs " yoffs)
+
+ ; yendoffs = viewheight / 2 + ywcount - 1;
+  mov w10 @(/ VIEWHEIGHT 2)
+  add w10 w10 ywcount
+  sub yendoffs w10 @1
+;  (debug-str-reg "yendoffs " yendoffs)
+  
+  ;yw=TEXTURESIZE-1;
+  mov yw @(- TEXTURESIZE 1)
+;  (debug-str-reg "yw " yw)
+  
+  ; this loops scales when the wall takes up more than the
+  ; vertical size of the screen, don't need it for first
+  ; render (TODO)
+   ;; while(yendoffs >= viewheight)
+   ;;  {
+   ;;      ywcount -= TEXTURESIZE/2;
+   ;;      while(ywcount <= 0)
+   ;;      {
+   ;;          ywcount += yd;
+   ;;          yw--;
+   ;;      }
+   ;;      yendoffs--;
+   ;;  }
+   ;;  if(yw < 0) return;
+
+  ;col = postsource[yw]
+  ldr ptr postsource:
+  lsl w10 yw @2
+  add ptr ptr w10
+  ldr col [ptr] ; this is the 32bit pixel data 
+;  (debug-str-reg "first col is " col)
+  
+  ;yendoffs = yendoffs * vbufPitch + postx;
+  ldr w10 vbufPitch:
+  ldr w11 postx:
+  mul yendoffs yendoffs w10
+  add yendoffs yendoffs w11
+;  (debug-str-reg "yendoffs before loop " yendoffs)
+
+;  (debug-str "entering loop .." #t)
+  (/while (yoffs le yendoffs) {
+;    (debug-str-reg "loop yoffs " yoffs)
+    
+    mov x20 vptr
+    lsl x10 yendoffs @2
+    add x20 x20 x10
+    str col [x20]  ; write pixel data to video memory
+
+    ;ywcount -= TEXTURESIZE/2
+    mov x10 @(/ TEXTURESIZE 2)
+    sub ywcount ywcount x10
+  ;  (debug-str-reg "iloop ywcount " ywcount)
+    (/when (ywcount le @0) {
+  :top-loop
+
+      add ywcount ywcount yd
+ ;     (debug-str-reg "ywcount " ywcount)
+      sub yw yw @1
+;      (debug-str-reg "yw " yw)
+      (/when (ywcount le @0)
+             {
+  ;            (debug-str "jmp 1 " #t)
+              b top-loop-
+              })
+      (/when (yw lt @0)
+             {
+ ;             (debug-str "jmp 2 " #t)
+              b local-end+
+             } )
+      ;col = postsource[yw]
+      ldr ptr postsource:
+      lsl w10 yw @2
+      add ptr ptr w10
+      ldr col [ptr] ; this is the 32bit pixel data 
+;      (debug-str-reg "col is " col)      
+    })
+    ldr w10 vbufPitch:
+    sub yendoffs yendoffs w10
+;    (debug-str-reg "yendoffs nojw " yendoffs)
+  })
+:local-end                               
+;  (debug-str "exit scalepost " #t)            
 })
 
 (subr HitHorizWall
@@ -1112,7 +1242,7 @@ error_invalid_el0_32:
        [ptr x4]
        )
       [x1] {
-  (debug-str "in hithorizwall" #t)
+;  (debug-str "in hithorizwall" #t)
   ;texture = ((xintercept+texdelta)>>TEXTUREFROMFIXEDSHIFT)&TEXTUREMASK;  
   ldr w10 xintercept:
   ldr w11 texdelta:
@@ -1121,7 +1251,7 @@ error_invalid_el0_32:
   mov w12 @TEXTUREMASK
   and w10 w10 w12
   mov texture w10
-  (debug-str-reg "texture " w10)
+;  (debug-str-reg "texture " w10)
 
   ;if ytilestep == -1
   ldr w10 ytilestep:
@@ -1147,7 +1277,7 @@ error_invalid_el0_32:
   ldr w10 lastside:
   mov w11 @0
   sub w11 w11 @1
-  (/when (w10 ne w11) { bl ScalePost: })
+  (/when (w10 ne w11) (preserve [x1 x2 x3 x4] { bl ScalePost: }))
 
   ;lastside = 0
   mov x10 @0
@@ -1168,13 +1298,16 @@ error_invalid_el0_32:
   adr ptr lasttexture:
   str texture [ptr]
 
-  
-  bl CalcHeight:
-  (debug-str-reg "calcheight " x0)
-  
-  ; wallheight[pixx] = CalcHeight()  ; TODO we don't have wallheight[] yet
 
-
+  ;wallheight[pixx] = CalcHeight()
+  (preserve [x1 x2 x3 x4] { bl CalcHeight: })
+ ; (debug-str-reg "calcheight " x0)
+  adr ptr wallheight:
+  ldr w10 pixx:
+  lsl w10 w10 @2
+  add ptr ptr w10
+  str w0 [ptr]
+  
   ;postx = pixx
   ldr w10 pixx:
   adr ptr postx:
@@ -1187,7 +1320,7 @@ error_invalid_el0_32:
   adr ptr horizwall:
   add ptr ptr w10
   ldrh wallpic [ptr]
-  (debug-str-reg "wallpix " wallpic)
+;  (debug-str-reg "wallpix " wallpic)
 
   ;postsource = PM_GetTexture(wallpic) + texture
   ; this is a bit different for us since we don't
@@ -1211,16 +1344,115 @@ error_invalid_el0_32:
   str x10 [ptr]
 
   
-})
+  })
 
 (subr HitVertWall
       ([vptr x1]
 
+       [wallpic w2]
+       [texture w3]
+       [ptr x4]
        )
       [x1] {
+;  (debug-str "in hitvertwall" #t)
+  ;texture = ((yintercept+texdelta)>>TEXTUREFROMFIXEDSHIFT)&TEXTUREMASK;  
+  ldr w10 yintercept:
+  ldr w11 texdelta:
+  add w10 w10 w11
+  asr w10 w10 @TEXTUREFROMFIXEDSHIFT
+  mov w12 @TEXTUREMASK
+  and w10 w10 w12
+  mov texture w10
+;  (debug-str-reg "texture " w10)
+
+  ;if xtilestep == -1
+  ldr w10 xtilestep:
+  mov w11 @0
+  sub w11 w11 @1 ; -1
+  (/when (w10 eq w11)
+       {
+         ; texture = TEXTUREMASK-texture
+         mov w11 @TEXTUREMASK
+         sub texture w11 texture
+         ;xintercept += TILEGLOBAL;
+         ldr w10 xintercept:
+         (load-immediate w11 TILEGLOBAL)
+         add w10 w10 w11
+         adr ptr xintercept:
+         str w10 [ptr]             
+       })
   
+  ;if(lastside!=-1) ScalePost();
+  ldr w10 lastside:
+  mov w11 @0
+  sub w11 w11 @1
+  (/when (w10 ne w11) (preserve [x1 x2 x3 x4] { bl ScalePost: }))
+
+  ;lastside = 1
+  mov x10 @1
+  adr ptr lastside:
+  str w10 [ptr]
+
+  ;lastintercept = xtile
+  ldr w10 xtile:
+  adr ptr lastintercept:
+  str w10 [ptr]
+
+  ;lasttilehit = tilehit
+  ldr w10 tilehit:
+  adr ptr lasttilehit:
+  str w10 [ptr]
+  
+  ;lasttexture = texture
+  adr ptr lasttexture:
+  str texture [ptr]
 
 
+  ;wallheight[pixx] = CalcHeight()
+  (preserve [x1 x2 x3 x4] { bl CalcHeight: })
+;  (debug-str-reg "calcheight " x0)
+  adr ptr wallheight:
+  ldr w10 pixx:
+  lsl w10 w10 @2
+  add ptr ptr w10
+  str w0 [ptr]
+  
+  ;postx = pixx
+  ldr w10 pixx:
+  adr ptr postx:
+  str w10 [ptr]
+
+
+  ;; ;wallpic = vertwall[tilehit]  ;
+  ldr w10 tilehit:
+  lsl w10 w10 @1
+  adr ptr vertwall:
+  add ptr ptr w10
+  ldrh wallpic [ptr]
+;  (debug-str-reg "wallpix " wallpic)
+
+  ;postsource = PM_GetTexture(wallpic) + texture
+  ; this is a bit different for us since we don't
+  ; have a page manager and are not using palette indexes.
+
+  ; we need to find the start of the image data for wallpic index
+  ; then offset into it texture << 2
+
+  ldr ptr textures-address:
+  mov w10 @$4000      ; texture size
+  mul w11 w10 wallpic ; size * index
+  add ptr ptr w11     ; start+offset
+
+  ; now we are pointing at the start of image
+  ; move along texture * 4 bytes
+  lsl w10 texture @2
+  add ptr ptr w10
+
+  mov x10 ptr
+  adr ptr postsource:
+  str x10 [ptr]
+
+  
 })
 
 (subr CalcHeight
@@ -1260,7 +1492,6 @@ error_invalid_el0_32:
   })
 
   ; int height = heightnumberator / (z>>8)
-  nop
   asr w10 w10 @8
   ldr w11 heightnumerator:
 ;  (debug-str-reg "asr z " w10)
@@ -1296,43 +1527,51 @@ error_invalid_el0_32:
  
   ; this is the actual raycaster
 
-  (debug-str "enter asm referesh" #t)          
+;  (debug-str "enter asm referesh" #t)          
   mov xstep @0
   mov ystep @0
   mov xpartial @0
   mov ypartial @0
 
   ; for each X column of the screen ..
-  (/for {mov local-pixx @0} (local-pixx lt  @1) (inc local-pixx) {
-    (debug-str "pixx loop" #t)
+  (/for {mov local-pixx @0} (local-pixx lt  @320) (inc local-pixx) {
+;    (debug-str "pixx loop" #t)
+;    (debug-str-reg "LOOPINDEX " local-pixx)
     ; store global pixx (keep in sync with loop counter)
     adr ptr pixx:
     str local-pixx [ptr]
     ; perform angle calcs
-
+    
     ;w0 = midangle + pixelangle[pixx]
     adr ptr pixelangle:    
     mov wtemp local-pixx
     lsl wtemp wtemp @1
     add ptr ptr wtemp 
     ldrh w0 [ptr]
-;    (debug-str-reg "angle1 = " w0)
+    nop
+    sxth w0 w0
+;    (debug-str-reg "pixelangle[pixx] = " w0)
     ldr wtemp midangle:
     add w10 w0 wtemp
-    ;(debug-str-reg "angle2 = " w0)
+;    (debug-str-reg "+midangle = " w0)
 
     (/when (w10 lt @0)  {
-      (debug-str "angl < 0" #t)                  
+;      (debug-str "angl < 0" #t)
+      mov w11 @FINEANGLES
+      add w10 w10 w11
     })
 
     (/when (w10 ge @3600)  {
-      (debug-str "angl >= 3600" #t)                  
-    })
+;      (debug-str "angl >= 3600" #t)                  
+      mov w11 @FINEANGLES
+      sub w10 w10 w11
+
+      })
 
     (/cond
      ([(w10 lt @900)
        {
-         (debug-str "angl < 900" #t)
+;         (debug-str "angl < 900" #t)
          mov w0 @1
          adr ptr xtilestep:
          str w0 [ptr]
@@ -1345,11 +1584,11 @@ error_invalid_el0_32:
          adr ptr finetangent:
          mov w11 @899 ; w11 index
          sub w11 w11 w10 ; index -= angl
-         (debug-str-reg "index " w11)
+;         (debug-str-reg "index " w11)
          lsl w11 w11 @2  ; 32 bit
          add ptr ptr w11
          ldr xstep [ptr]
-         (debug-str-reg "xstep " xstep)
+;         (debug-str-reg "xstep " xstep)
 
          ;ystep = -finetangent[angl]
          mov w11 w10 ; w11 = angl
@@ -1358,18 +1597,120 @@ error_invalid_el0_32:
          add ptr ptr w11
          ldr ystep [ptr]
          sub ystep wzr ystep
-         (debug-str-reg "ystep " ystep)
+;         (debug-str-reg "ystep " ystep)
          ; xpartial = xpartialup
          ldr xpartial xpartialup:
-         (debug-str-reg "xpartial " xpartial)
+;         (debug-str-reg "xpartial " xpartial)
          ; ypartial = ypartialdown
          ldr ypartial ypartialdown:
-         (debug-str-reg "ypartial " ypartial)
+;         (debug-str-reg "ypartial " ypartial)
          
        }]
-      [(w10 lt @1800) {(debug-str "angl < 1800" #t) }]
-      [(w10 lt @2700) {(debug-str "angl < 2700" #t) }]
-      [(w10 lt @3600) {(debug-str "angl < 3600" #t) }]))
+      [(w10 lt @1800)
+       {
+
+;         (debug-str "angl < 1800" #t)
+         mov w0 @0
+         sub w0 w0 @1  ; -1
+         adr ptr xtilestep:
+         str w0 [ptr]
+         adr ptr ytilestep:
+         str w0 [ptr]
+         ; xstep = -finetangent[angl-900]
+         adr ptr finetangent:
+         mov w11 @900 ; w11 index
+         sub w11 w10 w11 ; angle - 900
+;         (debug-str-reg "index " w11)
+         lsl w11 w11 @2  ; 32 bit
+         add ptr ptr w11
+         ldr xstep [ptr]
+         sub xstep xzr xstep
+;         (debug-str-reg "xstep " xstep)
+
+         ;ystep = -finetangent[1800-1-angl]
+         mov w11 @1799
+         sub w11 w11 w10
+         adr ptr finetangent:
+         lsl w11 w11 @2
+         add ptr ptr w11
+         ldr ystep [ptr]
+         sub ystep wzr ystep
+;         (debug-str-reg "ystep " ystep)
+         ldr xpartial xpartialdown:
+;         (debug-str-reg "xpartial " xpartial)
+         ldr ypartial ypartialdown:
+;         (debug-str-reg "ypartial " ypartial)
+         
+
+       }]
+      [(w10 lt @2700)
+       {
+;        (debug-str "angl < 2700" #t)
+         mov w0 @0
+         sub w0 w0 @1  ; -1
+         adr ptr xtilestep:
+         str w0 [ptr]
+         mov w0 @1
+         adr ptr ytilestep:
+         str w0 [ptr]
+         ; xstep = -finetangent[2700-1-angl]
+         adr ptr finetangent:
+         mov w11 @2699 ; w11 index
+         sub w11 w11 w10 ; 
+;         (debug-str-reg "index " w11)
+         lsl w11 w11 @2  ; 32 bit
+         add ptr ptr w11
+         ldr xstep [ptr]
+         sub xstep xzr xstep
+;         (debug-str-reg "xstep " xstep)
+
+         ;ystep = finetangent[angl-1800]
+         mov w11 @1800
+         sub w11 w10 w11
+         adr ptr finetangent:
+         lsl w11 w11 @2
+         add ptr ptr w11
+         ldr ystep [ptr]
+;         (debug-str-reg "ystep " ystep)
+         ldr xpartial xpartialdown:
+;         (debug-str-reg "xpartial " xpartial)
+         ldr ypartial ypartialup:
+;         (debug-str-reg "ypartial " ypartial)
+      
+        }]
+      [(w10 lt @3600)
+       {
+;        (debug-str "angl < 3600" #t)
+   
+         mov w0 @1
+         adr ptr xtilestep:
+         str w0 [ptr]
+         adr ptr ytilestep:
+         str w0 [ptr]
+         ; xstep = finetangent[angl-2700]
+         adr ptr finetangent:
+         mov w11 @2700 ; w11 index
+         sub w11 w10 w11 ; 
+;         (debug-str-reg "index " w11)
+         lsl w11 w11 @2  ; 32 bit
+         add ptr ptr w11
+         ldr xstep [ptr]
+;         (debug-str-reg "xstep " xstep)
+
+         ;ystep = finetangent[3600-1-angl]
+         mov w11 @3599
+         sub w11 w11 w10
+         adr ptr finetangent:
+         lsl w11 w11 @2
+         add ptr ptr w11
+         ldr ystep [ptr]
+;         (debug-str-reg "ystep " ystep)
+         ldr xpartial xpartialup:
+;         (debug-str-reg "xpartial " xpartial)
+         ldr ypartial ypartialup:
+;         (debug-str-reg "ypartial " ypartial)
+   
+        }]))
 
     ;yintercept = FixedMul(ystep,xpartial) + viewy
     ; make sure these are in x registers first
@@ -1379,12 +1720,12 @@ error_invalid_el0_32:
     sxtw x11 xpartial
     (FixedMul x12 x10 x11)
     mov x0 x12
-    (debug-str-reg "fixed mul res " w0)
+;    (debug-str-reg "fixed mul res " w0)
     ldr wtemp viewy:
     add w0 w0 wtemp
     adr ptr yintercept:
     str w0 [ptr]
-    (debug-str-reg "yintercept " w0)
+;    (debug-str-reg "yintercept " w0)
     mov w12 w0 ; w12 = yintercept (used in a moment)
     
     ;xtile = focaltx + xtilestep
@@ -1393,7 +1734,7 @@ error_invalid_el0_32:
     add w10 w10 w11
     adr ptr xtile:
     str w10 [ptr]
-    (debug-str-reg "xtile " w10)
+;    (debug-str-reg "xtile " w10)
     
     ; xspot = (xtile << 6) + (yintercept >> 16)
     lsl w10 w10 @6
@@ -1401,30 +1742,30 @@ error_invalid_el0_32:
     add w0 w10 w12
     adr ptr xspot:
     str w0 [ptr]
-    (debug-str-reg "xspot " w0)
+;    (debug-str-reg "xspot " w0)
 
     ;xintercept = FixedMul(xstep,ypartial) + viewx
     sxtw x10 xstep
     sxtw x11 ypartial
     (FixedMul x12 x10 x11)
     mov x0 x12
-    (debug-str-reg "fixed mul res " w0)
+;    (debug-str-reg "fixed mul res " w0)
     ldr wtemp viewx:
     add w0 w0 wtemp
     adr ptr xintercept:
     str w0 [ptr]
-    (debug-str-reg "xintercept " w0)
+;    (debug-str-reg "xintercept " w0)
     mov w12 w0 ; w12 = xintercept (used in a moment)
 
     ;ytile = focalty + ytilestep
     ldr w10 focalty:
-        (debug-str-reg "focalty " w10)
+;        (debug-str-reg "focalty " w10)
     ldr w11 ytilestep:
-            (debug-str-reg "ytilestep " w11)
+;            (debug-str-reg "ytilestep " w11)
     add w10 w10 w11
     adr ptr ytile:
     str w10 [ptr]
-    (debug-str-reg "ytile " w10)
+;    (debug-str-reg "ytile " w10)
     
     ; yspot = ((xintercept >> 16) << 6) + ytile
 
@@ -1433,7 +1774,7 @@ error_invalid_el0_32:
     add w0 w10 w12
     adr ptr yspot:
     str w0 [ptr]
-    (debug-str-reg "yspot " w0)
+;    (debug-str-reg "yspot " w0)
 
     adr ptr texdelta:
     mov x0 @0
@@ -1450,30 +1791,30 @@ error_invalid_el0_32:
     ldr w10 ytilestep:
     ldr w11 yintercept:
     asr w11 w11 @16
-    (debug-str-reg "asr " w11)
+;    (debug-str-reg "asr " w11)
     mov w12 @0
     sub w12 w12 @1 ; w12 = -1
     ldr w13 ytile:
     ; if ytilestep = -1 && (yintercept>>16 <= ytile) goto horizentry
     (/when (/and (w10 eq w12) (w11 le w13)) {
-      (debug-str "check 1 true" #t)
+;      (debug-str "check 1 true" #t)
       b horizentry:                                             
       })
     ; if ytilestep = 1 && (yintercept>>16 >= ytile) goto horizentry
     (/when (/and (w10 eq @1) (w11 ge w13)) {
-      (debug-str "check 2 true" #t)
+;      (debug-str "check 2 true" #t)
       b horizentry:                                             
     })
   :vertentry
     ; TODO: there's an OOB check we don't need right now
     ; if(xspot > maparea) break;
-    (debug-str "in vertentry" #t)
+;    (debug-str "in vertentry" #t)
     ; tilehit = tilemap[xspot]
     adr ptr tilemap:
     ldr wtemp xspot:
     add ptr ptr wtemp
     ldrb w0 [ptr]
-    (debug-str-reg "tilehit " w0)
+;    (debug-str-reg "tilehit " w0)
     adr ptr tilehit:
     str w0 [ptr]
 
@@ -1481,8 +1822,24 @@ error_invalid_el0_32:
     (/when (w0 ne @0) {
 
       ;TODO: a bunch of door and pushwall stuff
-      (debug-str-reg "HIT V " w0)                 
-      ; TODO: calcs and hitvertwall wall                 
+;      (debug-str-reg "HIT V " w0)                 
+
+      ;xintercept=xtile<<TILESHIFT;
+      ldr w10 xtile:
+      lsl w10 w10 @TILESHIFT
+      adr ptr xintercept:
+      str w10 [ptr]
+;      (debug-str "1 " #t)
+      ;ytile = (short) (yintercept >> TILESHIFT);
+      ldr w10 yintercept:
+      asr x10 x10 @TILESHIFT
+      adr ptr ytile:
+      str w10 [ptr]
+;      (debug-str "2 " #t)
+
+      (preserve [x1 x2 x3 x4 x5 x6 x7 x8 x9] {
+        bl HitVertWall:
+      })        
       b loop-next+
     })                   
 
@@ -1511,7 +1868,7 @@ error_invalid_el0_32:
     add w0 w10 w12
     adr ptr xspot:
     str w0 [ptr]
-    (debug-str-reg "xspot v " w0)
+;    (debug-str-reg "xspot v " w0)
 
     b start-vert-loop:
 
@@ -1526,22 +1883,22 @@ error_invalid_el0_32:
     ldr w13 xtile:
     ; if xtilestep = -1 && (xintercept>>16 <= xtile) goto vertentry
     (/when (/and (w10 eq w12) (w11 le w13)) {
-      (debug-str "check 3 true" #t)
+;      (debug-str "check 3 true" #t)
       b vertentry:                                             
       })
     ; if xtilestep = 1 && (xintercept>>16 >= xtile) goto vertentry
     (/when (/and (w10 eq @1) (w11 ge w13)) {
-      (debug-str "check 4 true" #t)
+;      (debug-str "check 4 true" #t)
       b vertentry:                                             
     })
   :horizentry
-    (debug-str "in horizentry" #t)
+;    (debug-str "in horizentry" #t)
     ; tilehit = tilemap[yspot]
     adr ptr tilemap:
     ldr wtemp yspot:
     add ptr ptr wtemp
     ldrb w0 [ptr]
-    (debug-str-reg "tilehit " w0)
+;    (debug-str-reg "tilehit " w0)
     adr ptr tilehit:
     str w0 [ptr]
 
@@ -1549,7 +1906,7 @@ error_invalid_el0_32:
     (/when (w0 ne @0) {
 
       ;TODO: a bunch of door and pushwall stuff
-      (debug-str-reg "HIT H " w0)                 
+;      (debug-str-reg "HIT H " w0)                 
       ;yintercept=ytile<<TILESHIFT;
       ldr w10 ytile:
       lsl w10 w10 @TILESHIFT
@@ -1557,12 +1914,15 @@ error_invalid_el0_32:
       str w10 [ptr]
       
       ;xtile = (short) (xintercept >> TILESHIFT);
-      ldr x10 xintercept:
+      ldr w10 xintercept:
       asr x10 x10 @TILESHIFT
       adr ptr xtile:
       str w10 [ptr]
-
-      bl HitHorizWall:
+      (preserve [x1 x2 x3 x4 x5 x6 x7 x8 x9] {
+        bl HitHorizWall:
+      })        
+  
+  
       
       ;break
       b loop-next+
@@ -1573,22 +1933,22 @@ error_invalid_el0_32:
     ;; todo spotvis update when we take on sprites
     ;ytile += ytilestep
     ldr w10 ytile:
-    (debug-str-reg "ytile " w10)
+;    (debug-str-reg "ytile " w10)
     ldr w11 ytilestep:
-    (debug-str-reg "ytilestep " w11)
+;    (debug-str-reg "ytilestep " w11)
     add w10 w10 w11
     adr ptr ytile:
     str w10 [ptr]
-    (debug-str-reg "ph ytile " w10)
+;    (debug-str-reg "ph ytile " w10)
     ;xintercept += xstep
     ldr w12 xintercept:
-    (debug-str-reg "xintercept " w12)
+;    (debug-str-reg "xintercept " w12)
     ;ldr w11 xstep:
-    (debug-str-reg "xstep " xstep)
+;    (debug-str-reg "xstep " xstep)
     add w10 w12 xstep
     adr ptr xintercept:
     str w10 [ptr]
-    (debug-str-reg "ph xintercept " w10)
+;    (debug-str-reg "ph xintercept " w10)
     ; yspot = ((xintercept >> 16) << 6) + ytile
     mov w12 w10
     asr w12 w12 @16
@@ -1597,16 +1957,16 @@ error_invalid_el0_32:
     add w0 w10 w12
     adr ptr yspot:
     str w0 [ptr]
-    (debug-str-reg "yspot h " w0)
+ ;   (debug-str-reg "yspot h " w0)
 
     
     b start-horiz-loop:
 
   :loop-next
-
+    ldr local-pixx pixx:
   })
 
-    (debug-str "exit asm referesh" #t)          
+;  (debug-str "exit asm referesh" #t)          
 })
 
 (subr WallRefresh
@@ -1625,10 +1985,10 @@ error_invalid_el0_32:
   adr ptr xpartialdown:
   str w0 [ptr]
 
-  ; debug
-  ldr w0 [ptr]
-  (debug-str-reg "xpartialdown is " x0)
-  ; end debug
+  ;; ; debug
+  ;; ldr w0 [ptr]
+  ;; (debug-str-reg "xpartialdown is " x0)
+  ;; ; end debug
 
   ; xpartialup = TILEGLOBAL - xpartialdown (x0)
   (load-immediate temp TILEGLOBAL)
@@ -1636,25 +1996,25 @@ error_invalid_el0_32:
   adr ptr xpartialup:
   str w0 [ptr]
 
-  ; debug
-  ldr w0 [ptr]
-  (debug-str-reg "xpartialup is " x0)
-  ; end debug
+  ;; ; debug
+  ;; ldr w0 [ptr]
+  ;; (debug-str-reg "xpartialup is " x0)
+  ;; ; end debug
 
   
   ; ypartialdown = viewy & (TILEGLOBAL-1)
   (load-immediate temp (- TILEGLOBAL 1))
   ldr w0 viewy:
-  (debug-str-reg "viewy is " w0)
+;  (debug-str-reg "viewy is " w0)
   and x0 x0 temp
-  (debug-str-reg "result is " w0)
+;  (debug-str-reg "result is " w0)
   adr ptr ypartialdown:
   str w0 [ptr]
 
-  ; debug
-  ldr w0 [ptr]
-  (debug-str-reg "ypartialdown is! " x0)
-  ; end debug
+  ;; ; debug
+  ;; ldr w0 [ptr]
+  ;; (debug-str-reg "ypartialdown is! " x0)
+  ;; ; end debug
 
   
   ; ypartialup = TILEGLOBAL - ypartialdown (x0)
@@ -1663,10 +2023,10 @@ error_invalid_el0_32:
   adr ptr ypartialup:
   str w0 [ptr]
 
-  ; debug
-  ldr w0 [ptr]
-  (debug-str-reg "ypartialup is " x0)
-  ; end debug
+  ;; ; debug
+  ;; ldr w0 [ptr]
+  ;; (debug-str-reg "ypartialup is " x0)
+  ;; ; end debug
 
   ; lastside = -1
   mov x0 @0
@@ -1674,7 +2034,7 @@ error_invalid_el0_32:
   adr ptr lastside:
   str w0 [ptr]
   bl AsmRefresh:
-  ;bl ScalePost:
+  bl ScalePost:
 })
 
 (subr ThreeDRefresh
@@ -1684,7 +2044,8 @@ error_invalid_el0_32:
        [temp w3]
        [temp2 w4]
        [temp3 x5]
-       [ptr x5])
+       [ptr x5]
+       [vangle w6])
       [x1]
       {
 
@@ -1701,11 +2062,11 @@ error_invalid_el0_32:
   (_objstruct/angle-get temp ply)    
   adr x0 viewangle:
   str temp [x0]
-
-  ; debug
-  ldr w0 [x0]
-  (debug-str-reg "viewangle is " x0)
-  ; end debug
+  mov vangle temp
+  ;; ; debug
+  ;; ldr w0 [x0]
+  ;; (debug-str-reg "viewangle is " x0)
+  ;; ; end debug
   
   
   ;midangle = viewangle * (FINEANGLES/ANGLES)
@@ -1716,7 +2077,7 @@ error_invalid_el0_32:
 
   ; debug
   ldr w0 [x0]
-  (debug-str-reg "midangle is " x0)
+;  (debug-str-reg "midangle is " x0)
   ; end debug
   
   ;TODO: really need to add support for the ldr / str with
@@ -1725,7 +2086,7 @@ error_invalid_el0_32:
   ; viewsin = sintable[viewangle]
   ; temp = viewangle
   adr ptr sintable:
-  lsr temp2 temp @2  ; multiply by 4 since 32bits
+  lsl temp2 vangle @2  ; multiply by 4 since 32bits
   add ptr ptr temp2    ; todo: this could all be 1 instruction
   ldr w0 [ptr]
   adr ptr viewsin:
@@ -1733,65 +2094,70 @@ error_invalid_el0_32:
 
   ; debug
   ldr w0 [ptr]
-  (debug-str-reg "viewsin is " x0)
+;  (debug-str-reg "viewsin is " x0)
   ; end debug
 
   
   ; viewy = player->x + FIxedMul(focallength,viewsin)  
   ldr temp2 focallength:
+  sxtw x0 w0
+  sxtw temp2 temp2
   (FixedMul temp3 x0 temp2)
-  (debug-str-reg "rresult " temp3)
+;  (debug-str-reg "rresult " temp3)
   (_objstruct/y-get temp2 ply)
-  (debug-str-reg "player->y " temp2)
+;  (debug-str-reg "player->y " temp2)
   sub x0 temp2 temp3
   adr ptr viewy:
   str w0 [ptr]
 
-  ; debug
-  ldr w0 [ptr]
-  (debug-str-reg "viewy is " x0)
-  ; end debug
+  ;; ; debug
+  ;; ldr w0 [ptr]
+  ;; (debug-str-reg "viewy is " x0)
+  ;; ; end debug
 
   ; focalty = viewy >> 16
   lsr w0 w0 @16
   adr ptr focalty:
   str w0 [ptr]
 
-  ; debug
-  ldr w0 [ptr]
-  (debug-str-reg "focalty is " x0)
-  ; end debug
+  ;; ; debug
+  ;; ldr w0 [ptr]
+  ;; (debug-str-reg "focalty is " x0)
+  ;; ; end debug
 
   ; viewcos = costable[viewangle]
   ; tmep = viewangle
   ; costable is a pointer
   ldr ptr costable:
+  lsl temp2 vangle @2  ; multiply by 4 since 32bits
   add ptr ptr temp2
   ldr w0 [ptr]
   adr ptr viewcos:
   str w0 [ptr]
 
-    ; debug
-  ldr w0 [ptr]
-  (debug-str-reg "viewcos is " x0)
-  ; end debug
+  ;;   ; debug
+  ;; ldr w0 [ptr]
+  ;; (debug-str-reg "viewcos is " x0)
+  ;; ; end debug
 
   
   ; viewx = player->x - FIxedMul(focallength,viewcos)  
   ldr temp2 focallength:
-  (debug-str-reg "focallength " temp2)
+  ;  (debug-str-reg "focallength " temp2)
+  sxtw x0 w0
+  sxtw temp2 temp2
   (FixedMul temp3 x0 temp2)
-  (debug-str-reg "result " temp3)
+;  (debug-str-reg "result " temp3)
   (_objstruct/x-get temp2 ply)
-  (debug-str-reg "player->x " temp2)
+;  (debug-str-reg "player->x " temp2)
   sub x0 temp2 temp3
   adr ptr viewx:
   str w0 [ptr]
 
-  ; debug
-  ldr w0 [ptr]
-  (debug-str-reg "viewx is " x0)
-  ; end debug
+  ;; ; debug
+  ;; ldr w0 [ptr]
+  ;; (debug-str-reg "viewx is " x0)
+  ;; ; end debug
 
   
   ; focaltx = viewx >> 16
@@ -1799,10 +2165,10 @@ error_invalid_el0_32:
   adr ptr focaltx:
   str w0 [ptr]
 
-  ; debug
-  ldr w0 [ptr]
-  (debug-str-reg "focaltx is " x0)
-  ; end debug
+  ;; ; debug
+  ;; ldr w0 [ptr]
+  ;; (debug-str-reg "focaltx is " x0)
+  ;; ; end debug
   
   
   ; viewtx = player->x >> 16}
@@ -1811,10 +2177,10 @@ error_invalid_el0_32:
   adr ptr viewtx:
   str w0 [ptr]
 
-  ; debug
-  ldr w0 [ptr]
-  (debug-str-reg "viewtx is " x0)
-  ; end debug
+  ;; ; debug
+  ;; ldr w0 [ptr]
+  ;; (debug-str-reg "viewtx is " x0)
+  ;; ; end debug
 
   
   ; viewty = player->y >> 16}
@@ -1823,10 +2189,10 @@ error_invalid_el0_32:
   adr ptr viewty:
   str w0 [ptr]
 
-  ; debug
-  ldr w0 [ptr]
-  (debug-str-reg "viewty is " x0)
-  ; end debug
+  ;; ; debug
+  ;; ldr w0 [ptr]
+  ;; (debug-str-reg "viewty is " x0)
+  ;; ; end debug
 
   
   ; =================
@@ -1834,7 +2200,8 @@ error_invalid_el0_32:
   bl VgaClearScreen:
   bl WallRefresh:
   ; ==================
-  
+
+;  (debug-str "finish 3d refersh" #t)
 })
 
 ; old gfx code that does the slideshows
@@ -1890,7 +2257,7 @@ error_invalid_el0_32:
 ;;     mov x0 vptr
 ;;     mov x1 x28
 
-;; ;    mov x1 @84
+;;     mov x1 @15
     
 ;;     ;bl render-pic:  ; render 2d pics
 ;;     bl render-tex:   ; render 2d textures
@@ -2078,7 +2445,9 @@ error_invalid_el0_32:
   ; the last bits are state, angle and flags.
   ; state we don't care about for now
   ; angle resolves to zero for the first map so we ignore that for now
-
+  ;; mov temp @10
+  ;; (_objstruct/angle-set temp ptr)
+  
   mov temp @4
   (_objstruct/flags-set temp ptr)  ; FL_NEVERMARK = 4
   
