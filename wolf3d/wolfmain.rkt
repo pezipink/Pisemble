@@ -49,7 +49,8 @@
 (define SCTLR_MMU_ENABLED               (arithmetic-shift 1 0))
 
 (define SCTLR_VALUE_MMU_DISABLED  (bitwise-ior SCTLR_RESERVED SCTLR_EE_LITTLE_ENDIAN SCTLR_I_CACHE_DISABLED SCTLR_D_CACHE_DISABLED SCTLR_MMU_DISABLED))
-(define SCTLR_VALUE_MMU_DISABLED2  (bitwise-ior SCTLR_RESERVED SCTLR_EE_LITTLE_ENDIAN SCTLR_I_CACHE_ENABLED SCTLR_D_CACHE_ENABLED SCTLR_MMU_DISABLED))
+(define SCTLR_VALUE_MMU_DISABLED2  (bitwise-ior SCTLR_RESERVED SCTLR_EE_LITTLE_ENDIAN SCTLR_I_CACHE_ENABLED SCTLR_D_CACHE_DISABLED SCTLR_MMU_DISABLED))
+(define SCTLR_VALUE_MMU_ENABLED  (bitwise-ior SCTLR_RESERVED SCTLR_EE_LITTLE_ENDIAN SCTLR_I_CACHE_ENABLED SCTLR_D_CACHE_ENABLED SCTLR_MMU_ENABLED))
 
 ; ***************************************
 ; HCR_EL2, Hypervisor Configuration Register (EL2), Page 2487 of AArch64-Reference-Manual.
@@ -74,6 +75,51 @@
 (define SPSR_MASK_ALL       (arithmetic-shift 7 6))
 (define SPSR_EL1h     (arithmetic-shift 5 0))
 (define SPSR_VALUE      (bitwise-ior SPSR_MASK_ALL SPSR_EL1h))
+
+; architectural feature access control register
+(define CPACR_EL1_FPEN    (bitwise-ior (arithmetic-shift 1 21) (arithmetic-shift 1 20))) ; // don't trap SIMD/FP registers
+(define CPACR_EL1_ZEN     (bitwise-ior (arithmetic-shift 1 17) (arithmetic-shift 1 16))) ;  // don't trap SVE instructions
+(define CPACR_EL1_VAL     (bitwise-ior CPACR_EL1_FPEN CPACR_EL1_ZEN))
+
+(define TCR_TG1_4K     (arithmetic-shift 2 30))
+(define TCR_T1SZ       (arithmetic-shift (- 64 48) 16))
+(define TCR_TG0_4K     (arithmetic-shift 0 14))
+(define TCR_T0SZ       (- 64 48))
+(define TCR_EL1_VAL    (bitwise-ior TCR_TG1_4K TCR_T1SZ TCR_TG0_4K TCR_T0SZ))
+
+; mmu bits
+(define MT_DEVICE_nGnRnE 		$0)
+(define MT_NORMAL_NC			$1)
+(define MT_DEVICE_nGnRnE_FLAGS		$00)
+(define MT_NORMAL_NC_FLAGS  		$44)
+(define MAIR_VALUE			(bitwise-ior (arithmetic-shift MT_DEVICE_nGnRnE_FLAGS (* 8 MT_DEVICE_nGnRnE)) (arithmetic-shift MT_NORMAL_NC_FLAGS (* 8 MT_NORMAL_NC))))
+
+(define TD_VALID                   (arithmetic-shift 1 0))
+(define TD_BLOCK                   (arithmetic-shift 0 1))
+(define TD_TABLE                   (arithmetic-shift 1 1))
+(define TD_ACCESS                  (arithmetic-shift 1 10))
+(define MATTR_NORMAL_NC            $42)
+(define MATTR_DEVICE_nGnRnE_INDEX  0)
+(define MATTR_NORMAL_NC_INDEX      1)
+(define TD_KERNEL_PERMS            (arithmetic-shift 1 54))
+(define TD_INNER_SHARABLE          (arithmetic-shift 3 8))
+
+(define TD_KERNEL_TABLE_FLAGS      (bitwise-ior TD_TABLE  TD_VALID))
+(define TD_KERNEL_BLOCK_FLAGS      (bitwise-ior TD_ACCESS TD_INNER_SHARABLE TD_KERNEL_PERMS (arithmetic-shift MATTR_NORMAL_NC_INDEX 2) TD_BLOCK TD_VALID))
+(define TD_DEVICE_BLOCK_FLAGS      (bitwise-ior TD_ACCESS TD_INNER_SHARABLE TD_KERNEL_PERMS (arithmetic-shift MATTR_DEVICE_nGnRnE_INDEX 2) TD_BLOCK TD_VALID))
+
+
+(define PAGE_SHIFT 12)
+(define TABLE_SHIFT 9)
+(define SECTION_SHIFT (+ PAGE_SHIFT  TABLE_SHIFT))
+(define PAGE_SIZE (arithmetic-shift 1 PAGE_SHIFT))
+(define SECTION_SIZE (arithmetic-shift 1 SECTION_SHIFT))
+
+(define PGD_SHIFT              (+ PAGE_SHIFT (* 3 TABLE_SHIFT)))
+(define PUD_SHIFT              (+ PAGE_SHIFT (* 2 TABLE_SHIFT)))
+(define PMD_SHIFT              (+ PAGE_SHIFT  TABLE_SHIFT))
+(define PUD_ENTRY_MAP_SIZE     (arithmetic-shift 1 PUD_SHIFT))
+(define BLOCK_SIZE $40000000)
 (define-syntax (kernel-entry stx)
   (syntax-parse stx
     [(_)
@@ -203,13 +249,63 @@
 
 (define VCORE-MBOX (+ PERIPH-BASE $00B880))
 
+(define-syntax-parser flip-gpio0
+  [(_) #'{
+          (preserve [x0 x1] {
+            ldr x1 flip0:                   
+            ;invert value
+            mov x0 @1
+            eor x1 x1 x0
+            ; store new value
+            adr x0 flip0:
+            str x1 [x0]
+            ; set out or clear depending on value
+            (/if (x1 eq @0)
+              {
+               mov x1 @1
+               ldr x0 GPIOSET0:
+               str w1 [x0]
+              }
+              {
+                mov x1 @1
+                ldr x0 GPIOCLEAR0:
+                str w1 [x0]
+              })
+          })                             
+          }])
+
+(define-syntax-parser flip-gpio1
+  [(_) #'{
+          (preserve [x0 x1] {
+            ldr x1 flip1:                   
+            ;invert value
+            mov x0 @1
+            eor x1 x1 x0
+            ; store new value
+            adr x0 flip1:
+            str x1 [x0]
+            ; set out or clear depending on value
+            (/if (x1 eq @0)
+              {
+               mov x1 @%10
+               ldr x0 GPIOSET0:
+               str w1 [x0]
+              }
+              {
+                mov x1 @%10
+                ldr x0 GPIOCLEAR0:
+                str w1 [x0]
+              })
+          })                             
+         }])
+
 (aarch64 "kernel8.img" ["2dgfx.obj" "textures.obj" "maps.obj"] {
      width = 320
      height = 200      
 
      ;mailbox offsets
      mbox-read = $0
-     mbox-poll = $10
+     Mbox-poll = $10
      mbox-sender = $14
      mbox-status = $18
      mbox-config = $1c
@@ -252,10 +348,12 @@
 
     ;;     msr     cpacr_el1, x0	 // Enable FP/SIMD at EL1
     (write-value-32 $d5181040)
-     
+
+
+    
     ; get ready to switch from EL3 down to EL1
-    ldr     x0 SCTLR-VALUE-MMU-DISABLED:
-    msr	    sctlr_el1 x0		
+    ;; ldr     x0 SCTLR-VALUE-MMU-DISABLED:
+    ;; msr	    sctlr_el1 x0		
 
     ldr     x0 HCR-VALUE:
     msr     hcr_el2 x0
@@ -265,7 +363,26 @@
 
     ldr     x0 SPSR-VALUE:
     msr     spsr_el3 x0
+
+    ; ===============
+    ; MMU
+
+    ldr x0 CPACR_EL1_VAL:
+    (write-value-32 $d5181040) ; msr cpacr_el1 x0
+
+    ldr x0 TCR_EL1_VAL:
+    (write-value-32 $d5182040) ; msr tcr_el1 x0
+
+    ldr x0 MAIR_VALUE:
+    (write-value-32 $d518a200) ; msr MAIR_EL1, x0
+    (write-value-32 $d539f220)
+    (write-value-32 $b27a0000)
+    (write-value-32 $d519f220)
+
+
     
+    ; end MMU
+    ; ==================
     adr     x0 el1_entry:
     msr     elr_el3 x0
 
@@ -280,9 +397,49 @@
     ldr x1 START:
     mov sp x1
 
+
+    ; =========== enable mmu 
+    bl init-mmu:        
+
+    ; write table locatio
+    adr x0 id_pgd:
+    (write-value-32 $d5182000) ;  msr ttbr0_el1, x0
+
+
+    ; flip mmu enable bit
+
+    ldr     x0 SCTLR-VALUE-MMU-ENABLED:
+;    msr	    sctlr_el1 x0		
+
+    mrs x0 sctlr_el1
+    mov x1 @SCTLR_MMU_ENABLED
+    orr x0 x0 x1
+
+    mov x1 @SCTLR_I_CACHE_ENABLED
+    orr x0 x0 x1
+
+    mov x1 @SCTLR_D_CACHE_ENABLED
+    orr x0 x0 x1
+
+    ;; msr sctlr_el1 x0
+
+    (write-value-32 $d5033f9f) ;dsb sy
+    (write-value-32 $d5033fdf) ; isb
+    ; ============== end mmu
+    
     ; setup the mini-uart for debug comms
     (init-uart)
-    (debug-str "init irq vector" #t)
+    (debug-str "uart up" #t)
+
+    
+    ; set gpio 0 and 1 to output
+    ldr x0 GPFSEL:
+    mov x1 @%001001
+    str w1 [x0]
+
+    
+    
+    (debug-str "init irq vector" #t)    
     ; setup IRQ vectors 
     bl irq-vector-init:
 ;    (debug-str"init ic" #t)
@@ -348,6 +505,10 @@
     ;     add x0 x0 @20
     ldr w0 (x0 @0)
     (debug-reg x0)
+
+
+    ; set alpha
+;    bl set-alpha-mode:
     
     (debug-str "fb addr" #t)
     adr x0 fb:
@@ -427,6 +588,124 @@
  :loop
      b loop-
 
+  ENTRIES-PER-TABLE = 512
+  ENTRIES-PER-TABLE-1 = 511
+
+(define-syntax-parser create-table-entry
+ [(_ tbl:register next-tbl:register va:register shift temp1:register temp2:register temp3:register)
+  #'{
+     lsr temp1 va @shift                ; table_index = va >> shift
+     mov temp2 @ENTRIES-PER-TABLE-1    
+     and temp1 temp1 temp2              ; table index &= entries-1
+     (load-immediate temp3 TD_KERNEL_TABLE_FLAGS)
+     orr temp2 next-tbl temp3           ; descriptor = next_tbl | flags
+     lsl temp1 temp1 @3                 ; table_index <<= 3
+     add temp1 temp1 tbl                ; table_index += tbl
+     str temp2 [temp1]                  ; [table_index] = descriptor
+     }])
+
+(define-syntax-parser create-block-map
+ [(_ pmd:register vstart:register vend:register pa:register temp1:register temp2:register temp3:register temp4:register temp5:register)
+  #'{
+     ; vstart >>= section shift
+     lsr temp1 vstart @SECTION_SHIFT
+     ; vstart &= entries-1     
+     mov temp2 @ENTRIES-PER-TABLE-1    
+     and temp1 temp1 temp2
+
+     ; vend >>= section shfit
+     lsr temp2 vend @SECTION_SHIFT
+     ; vend--
+     sub temp2 temp2 @1
+     ;vend &= entries-1
+     mov temp3 @ENTRIES-PER-TABLE-1    
+     and temp2 temp2 temp3
+
+     lsr temp3 pa @SECTION_SHIFT
+     lsl temp3 temp3 @SECTION_SHIFT
+
+ :do-loop
+     mov temp4 temp3 ; _pa = pa
+     (load-immediate temp5 $3B400000)
+;     (debug-str-reg "3b is " temp5)
+     (/if (temp3 ge temp5)
+          {
+           (load-immediate temp5 TD_DEVICE_BLOCK_FLAGS)
+           orr temp4 temp4 temp5
+           }
+          {
+           (load-immediate temp5 TD_KERNEL_BLOCK_FLAGS)
+           orr temp4 temp4 temp5
+           })
+     lsl temp5 temp1 @$3
+     add temp5 temp5 pmd
+     str temp4 [temp5]
+     (load-immediate temp4 SECTION_SIZE)
+     add temp3 temp3 temp4 ; pa += section size
+     add temp1 temp1 @1 ; vsize ++
+     (/when (temp1 le temp2) { b do-loop- })
+     
+   }])
+     
+:init-mmu
+nop
+(regs
+ ([map_base x1]
+  [tbl x2]
+  [next_tbl x3]
+  [block_tbl x4]
+  [i x5]
+  [offset x6]
+  [offset_block x7]) {
+  mov map_base @0             ;map_base
+  adr tbl id_pgd:        ;tbl
+  (load-immediate x0 PAGE_SIZE)
+  add next_tbl tbl x0  ;next_tbl
+  ;  (load-immediate x4 PGD_SHIFT)
+  ;; (debug-str "create-table-entry main" #t)
+  ;; (debug-str-reg "tbl " tbl)
+  ;; (debug-str-reg "next_tbl " next_tbl)
+  ;; (debug-str-reg "map_base " map_base)
+  (create-table-entry tbl next_tbl map_base PGD_SHIFT x10 x11 x12)
+  (load-immediate x0 PAGE_SIZE)
+  add tbl tbl x0  ; tbl += page size
+  add next_tbl next_tbl x0  ; next_tbl += page size
+  mov block_tbl tbl     ; block_tbl = tbl
+  (/for {mov i @0} (i lt @4) {add i i @1} {
+   ;; (debug-str "create-table-entry " #t)
+   ;; (debug-str-reg "tbl " tbl)
+   ;; (debug-str-reg "next_tbl " next_tbl)
+   ;; (debug-str-reg "map_base " map_base)
+
+   (create-table-entry tbl next_tbl map_base PUD_SHIFT x10 x11 x12)
+
+   (load-immediate x0 PAGE_SIZE)
+   add next_tbl next_tbl x0  ; next_tbl += page size
+   add block_tbl block_tbl x0  ; block_tbl += page size
+   (load-immediate x0 PUD_ENTRY_MAP_SIZE)
+   add map_base map_base x0  ; map_base += entry map size
+
+   (load-immediate x0 BLOCK_SIZE)
+   mul offset x0 i    ; offset = blocksize * i
+
+   add offset_block offset x0    ; offset_block = offset + blocksize
+
+   ;; (debug-str "create-block-map " #t)
+   ;; (debug-str-reg "block-tbl " block_tbl)
+   ;; (debug-str-reg "offset " offset)
+   ;; (debug-str-reg "offset_block " offset_block)
+
+  (create-block-map block_tbl offset offset_block offset x10 x11 x12 x13 x14)
+   
+   
+  })
+
+  ;; adr x0 id_pgd:
+  ;; mov x1 @(+ 4 (/ $6000 16))
+  ;;  bl memory-dump:
+})
+  ret x30
+     
 (create-send-char)
 
 
@@ -659,6 +938,16 @@
    [y-loc 4]         ; virtual y pos
    [end-tag 4]))
 
+(/struct _setalpha_msg
+  ([total-size 4]     ; total buffer size bytes including headers
+   [request-code 4]   ; request / response code (0 = request)
+   ;begin tags
+   [tag-id 4]
+   [request-size 4]
+   [tag-request-code 4]
+   [alpha-mode 4]         ; alpha mode
+   [end-tag 4]))
+
 (define-syntax-parser write-virtual-offset
   [(_ base:register y-loc:register)
    #'{ ;note this trashes x0
@@ -667,6 +956,16 @@
       (_voffset_msg/tag-id-set $48009 base)
       (_voffset_msg/request-size-set 8 base)
       (_voffset_msg/y-loc-set y-loc base)
+      }])
+
+(define-syntax-parser write-alpha-mode
+  [(_ base:register a-mode:register)
+   #'{ ;note this trashes x0
+      (zero-mem base (sizeof/_setalpha_msg))
+      (_setalpha_msg/total-size-set (* 7 4) base)
+      (_setalpha_msg/tag-id-set $48007 base)
+      (_setalpha_msg/request-size-set 4 base)
+      (_setalpha_msg/alpha-mode-set a-mode base)
      }])
 
 ; virtual "page flip" here we tell the gpu to
@@ -680,8 +979,17 @@
   mov x8 sp
   bl send-vcore-msg:
   add sp sp @(sizeof/_voffset_msg)                                          
-})
+  })
 
+(subr set-alpha-mode () [x0 x1 x2 x16] {
+  ; reserve space on stack for v-offset message
+  sub sp sp @(sizeof/_setalpha_msg)
+  mov x10 @2                                              
+  (write-alpha-mode sp w10)
+  mov x8 sp
+  bl send-vcore-msg:
+  add sp sp @(sizeof/_setalpha_msg)                                          
+})
 
 ; pass message address in x8
 (subr send-vcore-msg ()[x0 x1 x2 x3 x8]{
@@ -996,6 +1304,7 @@ error_invalid_el0_32:
 :loop
     ldr w0 finished-rendering:
     cbnz x0 loop-
+    (flip-gpio1)
     bl get-back-buffer:
     mov vptr x0
     mov vptr-bak x0
@@ -1022,24 +1331,28 @@ error_invalid_el0_32:
 
 
     ; only once code 
-    ;; adr x0 debug-flag:
-    ;; ldr x0 [x0]
-    ;; cbz x0 done+
+    adr x0 debug-flag:
+    ldr x0 [x0]
+    cbz x0 done+
     mov x1 vptr-bak
+;    (debug-str "debg " #t)
     (preserve [x4 x8 x9 x10 x14] {
     bl ThreeDRefresh:   ; raycaster
-    })
-       ;; mov temp @0
-    ;; adr x0 debug-flag:
-    ;; str temp [x0]
+       })
 
     ldr tptr player:
-
-
     (_objstruct/angle-get wtemp tptr)    
     add wtemp wtemp @1
     (/when (wtemp ge @360) {mov wtemp @0})
     (_objstruct/angle-set wtemp tptr) 
+
+    
+    adr x0 debug-flag:
+    ldr temp [x0]
+    sub temp temp @1
+    adr x0 debug-flag:
+    str temp [x0]
+
     
     
     :done
@@ -1048,7 +1361,7 @@ error_invalid_el0_32:
     adr x0 finished-rendering:
     str temp [x0]
 
-
+    (flip-gpio1)
     b loop-
 })
 
@@ -1080,6 +1393,7 @@ error_invalid_el0_32:
    lsl temp temp @2
    add ptr ptr temp
    ldr colour [ptr]
+
    ; ceiling hardcoded to palette $1d for now
    (/for { mov y @0 } (y lt @(/ VIEWHEIGHT 2)) (inc y) {
      (/for { mov x @0 } (x lt @$50) (inc x) {                                                   
@@ -1098,6 +1412,7 @@ error_invalid_el0_32:
    lsl temp temp @2
    add ptr ptr temp
    ldr colour [ptr]
+
    (/for { } (y lt @VIEWHEIGHT) (inc y) {
      (/for { mov x @0 } (x lt @$50) (inc x) {                                                       str colour [vptr]
          str colour [vptr @4]
@@ -1548,7 +1863,6 @@ error_invalid_el0_32:
     lsl wtemp wtemp @1
     add ptr ptr wtemp 
     ldrh w0 [ptr]
-    nop
     sxth w0 w0
 ;    (debug-str-reg "pixelangle[pixx] = " w0)
     ldr wtemp midangle:
@@ -2284,7 +2598,7 @@ error_invalid_el0_32:
   ldr x0 SMICS:  ; ack vsync
   mov x1 @0
   str w1 [x0]
-
+  (flip-gpio0)
   ; only flip if render finished
   ldr w0 finished-rendering:
   cbz w0 quit:
@@ -2301,12 +2615,14 @@ error_invalid_el0_32:
   
   bl page-flip:
   ;bl update-gfx:
+
   adr x1 finished-rendering:
   mov x2 @0
   str w2 [x1]
 
   
-:quit})
+  :quit
+    (flip-gpio0)})
 
 
 ; //////////////////////////////////////////////
@@ -2445,8 +2761,8 @@ error_invalid_el0_32:
   ; the last bits are state, angle and flags.
   ; state we don't care about for now
   ; angle resolves to zero for the first map so we ignore that for now
-  ;; mov temp @10
-  ;; (_objstruct/angle-set temp ptr)
+  mov temp @180
+  (_objstruct/angle-set temp ptr)
   
   mov temp @4
   (_objstruct/flags-set temp ptr)  ; FL_NEVERMARK = 4
@@ -2558,10 +2874,13 @@ error_invalid_el0_32:
   :2d-image-header-address (resolve-global-label-address :DATA-2d-image-header)
   :2d-images-address (resolve-global-label-address :DATA-2d-images)
   :textures-address (resolve-global-label-address :DATA-textures)
-  :maps-address (resolve-global-label-address :DATA-maps)
+:maps-address (resolve-global-label-address :DATA-maps)
+
   ; end linker
   ; ///
   (periph-addresses)
+  :flip0 (write-value-64 0)
+  :flip1 (write-value-64 0)
   :dELAY (write-value-64 $FFFFF)
   :dELAY2 (write-value-64 200000)
   :VC_MBOX (write-value-64 VCORE-MBOX)
@@ -2571,8 +2890,12 @@ error_invalid_el0_32:
 :CONVERT (write-value-64 $3FFFFFFF)
 :HCR-VALUE (write-value-64 HCR_VALUE)
 :SCTLR-VALUE-MMU-DISABLED (write-value-64 SCTLR_VALUE_MMU_DISABLED2)
+:SCTLR-VALUE-MMU-ENABLED (write-value-64 SCTLR_VALUE_MMU_ENABLED)
 :SCR-VALUE (write-value-64 SCR_VALUE)
 :SPSR-VALUE (write-value-64 SPSR_VALUE)
+:CPACR_EL1_VAL (write-value-64 CPACR_EL1_VAL)
+:TCR_EL1_VAL(write-value-64 TCR_EL1_VAL)
+:MAIR_VALUE (write-value-64 MAIR_VALUE)
 :FAKE-ISR (write-value-64 $10000)
 :CURRENT-PAGE (write-value-64 0)
 :FRAME-SIZE (write-value-64 (* width height 4))
@@ -2604,7 +2927,7 @@ error_invalid_el0_32:
   ; used to specify the channel
   /= 16
   :MBOX-MSG
-    (write-value-32 (* 35 4)) ; total buffer size bytes including headers
+    (write-value-32 (* 39 4)) ; total buffer size bytes including headers
     (write-value-32 0) ; request / response code (0 = request)
     ;begin tags
     ; set physical 
@@ -2638,6 +2961,13 @@ error_invalid_el0_32:
       (write-value-32 4) 
       (write-value-32 4) 
       (write-value-32 1) ; RGB
+
+
+   ; set alpha
+      (write-value-32 $48007)
+      (write-value-32 4) 
+      (write-value-32 4) 
+      (write-value-32 0) ; alpha off
 
    ; get fb
       (write-value-32 $40001)
@@ -2675,7 +3005,7 @@ error_invalid_el0_32:
 /= 8
 ;wolf uses a lot of global state!
 :postsource (write-value-64 0) ; pointer to texture column data
-:debug-flag (write-value-64 1)
+:debug-flag (write-value-64 (* 360 4))
 :focallength (write-value-32 $5700)
 :scale (write-value-32 128)
 :heightnumerator (write-value-32 223232)
@@ -2716,7 +3046,11 @@ error_invalid_el0_32:
 :yspot (write-value-32 0)
 ; end shorts
 
-
+/= $1000
+:id_pgd
+(reserve (+ (* 6 (arithmetic-shift 1 12)))) ; $6000
+(write-value-64 $BADF00D)
+(write-value-64 $BADF00D)
 (define viewwidth 320)
 (define halfview (/ viewwidth 2))
 (define facedist (+ 0.0 #x5700 MINDIST))
@@ -2791,6 +3125,8 @@ error_invalid_el0_32:
     (write-value (string->number (string-trim (list-ref rgb 1))))
     (write-value (string->number (string-trim (list-ref rgb 0))))
     (write-value 255)))
+
+
 })
 
 

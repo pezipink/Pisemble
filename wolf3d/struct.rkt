@@ -13,6 +13,13 @@
          mov target @(bitwise-and value $FFFF)
          movk target @(arithmetic-shift value -16) LSL @16
          }]
+       [(< value (expt 2 64))
+        {
+         mov target @(bitwise-and value $FFFF)
+         movk target @(bitwise-and (arithmetic-shift value -16) $FFFF) LSL @16
+         movk target @(bitwise-and (arithmetic-shift value -32) $FFFF) LSL @32
+         movk target @(bitwise-and (arithmetic-shift value -48) $FFFF) LSL @48
+         }]
        [else (error (format "load-immediate: value too large, not currently supported ~a" value))])])
 
 ;; (define-syntax-parser asm-print
