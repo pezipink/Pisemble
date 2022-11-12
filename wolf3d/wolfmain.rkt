@@ -91,14 +91,16 @@
 (define MT_DEVICE_nGnRnE 		$0)
 (define MT_NORMAL_NC			$1)
 (define MT_DEVICE_nGnRnE_FLAGS		$00)
-(define MT_NORMAL_NC_FLAGS  		$44)
+;(define MT_NORMAL_NC_FLAGS  		$44)
+;(define MT_NORMAL_NC_FLAGS  		$A0) ; cacheable!
+(define MT_NORMAL_NC_FLAGS  		$40) ; cacheable!
 (define MAIR_VALUE			(bitwise-ior (arithmetic-shift MT_DEVICE_nGnRnE_FLAGS (* 8 MT_DEVICE_nGnRnE)) (arithmetic-shift MT_NORMAL_NC_FLAGS (* 8 MT_NORMAL_NC))))
 
 (define TD_VALID                   (arithmetic-shift 1 0))
 (define TD_BLOCK                   (arithmetic-shift 0 1))
 (define TD_TABLE                   (arithmetic-shift 1 1))
 (define TD_ACCESS                  (arithmetic-shift 1 10))
-(define MATTR_NORMAL_NC            $42)
+(define MATTR_NORMAL_NC            $43)
 (define MATTR_DEVICE_nGnRnE_INDEX  0)
 (define MATTR_NORMAL_NC_INDEX      1)
 (define TD_KERNEL_PERMS            (arithmetic-shift 1 54))
@@ -406,10 +408,10 @@
     (write-value-32 $d5182000) ;  msr ttbr0_el1, x0
 
 
-    ; flip mmu enable bit
+    ; flip mmu & cache enable bits
 
-    ldr     x0 SCTLR-VALUE-MMU-ENABLED:
-;    msr	    sctlr_el1 x0		
+    ;; ldr     x0 SCTLR-VALUE-MMU-ENABLED:
+    ;; msr	    sctlr_el1 x0		
 
     mrs x0 sctlr_el1
     mov x1 @SCTLR_MMU_ENABLED
@@ -421,7 +423,7 @@
     mov x1 @SCTLR_D_CACHE_ENABLED
     orr x0 x0 x1
 
-    ;; msr sctlr_el1 x0
+    msr sctlr_el1 x0
 
     (write-value-32 $d5033f9f) ;dsb sy
     (write-value-32 $d5033fdf) ; isb
