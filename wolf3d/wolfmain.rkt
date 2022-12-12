@@ -47,6 +47,7 @@
 (define SCTLR_D_CACHE_ENABLED           (arithmetic-shift 1 2))
 (define SCTLR_MMU_DISABLED              (arithmetic-shift 0 0))
 (define SCTLR_MMU_ENABLED               (arithmetic-shift 1 0))
+(define SCTLR_BP_ENABLED           (arithmetic-shift 1 11))
 
 (define SCTLR_VALUE_MMU_DISABLED  (bitwise-ior SCTLR_RESERVED SCTLR_EE_LITTLE_ENDIAN SCTLR_I_CACHE_DISABLED SCTLR_D_CACHE_DISABLED SCTLR_MMU_DISABLED))
 (define SCTLR_VALUE_MMU_DISABLED2  (bitwise-ior SCTLR_RESERVED SCTLR_EE_LITTLE_ENDIAN SCTLR_I_CACHE_ENABLED SCTLR_D_CACHE_DISABLED SCTLR_MMU_DISABLED))
@@ -85,22 +86,27 @@
 (define TCR_T1SZ       (arithmetic-shift (- 64 48) 16))
 (define TCR_TG0_4K     (arithmetic-shift 0 14))
 (define TCR_T0SZ       (- 64 48))
+
 (define TCR_EL1_VAL    (bitwise-ior TCR_TG1_4K TCR_T1SZ TCR_TG0_4K TCR_T0SZ))
 
 ; mmu bits
 (define MT_DEVICE_nGnRnE 		$0)
 (define MT_NORMAL_NC			$1)
 (define MT_DEVICE_nGnRnE_FLAGS		$00)
-;(define MT_NORMAL_NC_FLAGS  		$44)
+;(define MT_NORMAL_NC_FLAGS  		$44) ; no cache
 ;(define MT_NORMAL_NC_FLAGS  		$A0) ; cacheable!
 (define MT_NORMAL_NC_FLAGS  		$40) ; cacheable!
+;(define MT_NORMAL_NC_FLAGS  		$40) ; cacheable!
+;(define MT_NORMAL_NC_FLAGS  		$33) ; cacheable! normal, outer write-trhough transient, allocate allocate
+;(define MT_NORMAL_NC_FLAGS  		$ff) ; cacheable! outer write back transiert
 (define MAIR_VALUE			(bitwise-ior (arithmetic-shift MT_DEVICE_nGnRnE_FLAGS (* 8 MT_DEVICE_nGnRnE)) (arithmetic-shift MT_NORMAL_NC_FLAGS (* 8 MT_NORMAL_NC))))
 
 (define TD_VALID                   (arithmetic-shift 1 0))
 (define TD_BLOCK                   (arithmetic-shift 0 1))
 (define TD_TABLE                   (arithmetic-shift 1 1))
 (define TD_ACCESS                  (arithmetic-shift 1 10))
-(define MATTR_NORMAL_NC            $43)
+;(define MATTR_NORMAL_NC            $43)
+(define MATTR_NORMAL_NC            $40)
 (define MATTR_DEVICE_nGnRnE_INDEX  0)
 (define MATTR_NORMAL_NC_INDEX      1)
 (define TD_KERNEL_PERMS            (arithmetic-shift 1 54))
@@ -301,6 +307,17 @@
           })                             
          }])
 
+     ; TIMER bits
+(define     TIMERBase #x40000000)
+(define      timerFrequency 10000000)
+(define     crystalFrequency 19200000)
+(define     prescaler 
+     (quotient
+      (+
+       (* (arithmetic-shift 1 31) timerFrequency)
+       (quotient crystalFrequency 2))
+      crystalFrequency))
+
 (aarch64 "kernel8.img" ["2dgfx.obj" "textures.obj" "maps.obj"] {
      width = 320
      height = 200      
@@ -319,6 +336,7 @@
      ;Mailbox channels
      mbox-ch-prop = $8  ; request to VC from ARM
 
+     
      ; wolf bits
      TILESHIFT = 16
      TILEGLOBAL = (arithmetic-shift 1 16)
@@ -350,8 +368,6 @@
 
     ;;     msr     cpacr_el1, x0	 // Enable FP/SIMD at EL1
     (write-value-32 $d5181040)
-
-
     
     ; get ready to switch from EL3 down to EL1
     ;; ldr     x0 SCTLR-VALUE-MMU-DISABLED:
@@ -381,8 +397,6 @@
     (write-value-32 $b27a0000)
     (write-value-32 $d519f220)
 
-
-    
     ; end MMU
     ; ==================
     adr     x0 el1_entry:
@@ -400,13 +414,21 @@
     mov sp x1
 
 
-    ; =========== enable mmu 
-    bl init-mmu:        
 
+    ; =========== setup timer
+
+    ;; nop
+    (load-immediate x1 TIMERBase)
+    (load-immediate x0 prescaler)
+    str w0 [x1 @$8]
+    
+
+    ; =========== enable mmu 
+
+    bl init-mmu:        
     ; write table locatio
     adr x0 id_pgd:
     (write-value-32 $d5182000) ;  msr ttbr0_el1, x0
-
 
     ; flip mmu & cache enable bits
 
@@ -423,6 +445,7 @@
     mov x1 @SCTLR_D_CACHE_ENABLED
     orr x0 x0 x1
 
+
     msr sctlr_el1 x0
 
     (write-value-32 $d5033f9f) ;dsb sy
@@ -433,14 +456,63 @@
     (init-uart)
     (debug-str "uart up" #t)
 
-    
-    ; set gpio 0 and 1 to output
-    ldr x0 GPFSEL:
-    mov x1 @%001001
-    str w1 [x0]
 
+
+    ; SPEED TST CODE
+
+
+    adr x1 sizes:
+  :mloop2
+    ldr w2 [x1] @4
+    mov x9 x2
+    (debug-str-reg "KB:" x2)
+    cbz w2 mpause+
+
+    lsl w2 w2 @3
+
+    bl timer-start:
+    mov x3 @256
+
+  :mloop1
+    adr x0 textures-address:    
+    mov x8 x2
+  :mloop3
+    ;ldp x4 x5 [x0] @16 ; can't do this post increase yet
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    (write-value-32 $f1000508)
+;    sub x8 x8 @1
+    b.ne mloop3-
+    (write-value-32 $f1000463)
+;    sub x3 x3 @1
+    b.ne mloop1-
+
+    bl timer-stop:
+    udiv x0 x0 x9
+    (load-immediate x10 (quotient (* 1024 256 timerFrequency) (* 1024 1024)))
+    udiv x0 x10 x0
+    (debug-str-reg "MBytes per second " x0)
+    b mloop2-
     
     
+:mpause nop ;b mpause-
+    ; END SPEED TETS
+
+
     (debug-str "init irq vector" #t)    
     ; setup IRQ vectors 
     bl irq-vector-init:
@@ -493,8 +565,7 @@
     ;; adr x0 tilemap:
     ;; mov x1 @256
     ;; bl memory-dump:
-    
-    
+               
     (debug-str "fb addr nefore" #t)
     adr x0 fb:
     ldr w0 [x0]
@@ -526,6 +597,7 @@
      mov x8 x0  ; X8 holds base video memory
      adr x9 VMEM:
      str x8 (x9 @0)  ; store memory pointer in VMEM
+     (debug-str-reg "vptr is " x8)
      mov x1 @255
      lsl x1 x1 @32
      movk x1 @255
@@ -739,6 +811,22 @@ nop
     :done}])
 
 (define dump-template "0000000000000000 : 00 00 00 00 | 00 00 00 00 | 00 00 00 00 | 00 00 00 00 | 0000000000000000")
+
+(subr timer-start () [x0 x1]  {
+  (load-immediate x0 TIMERBase)
+  ldr w0 [x0 @$1c]
+  adr x1 time:
+  str w0 [x1]
+})  
+
+(subr timer-stop () [x1]  {
+  (load-immediate x0 TIMERBase)
+  ldr w0 [x0 @$1c] ; time at end
+  ldr w1 time:     ;time at start
+  sub x0 x0 x1
+;  (debug-str-reg "Time = " x0)
+})
+
 (subr memory-dump () [x0 x1 x2 x3 x4 x5 x6 x7 x8] {
   ; arguments 
   ; x0 will be the start address
@@ -1333,27 +1421,29 @@ error_invalid_el0_32:
 
 
     ; only once code 
-    adr x0 debug-flag:
-    ldr x0 [x0]
-    cbz x0 done+
+    ;; adr x0 debug-flag:
+    ;; ldr x0 [x0]
+    ;; cbz x0 done+
     mov x1 vptr-bak
 ;    (debug-str "debg " #t)
     (preserve [x4 x8 x9 x10 x14] {
     bl ThreeDRefresh:   ; raycaster
        })
 
+    ; rotate player
     ldr tptr player:
     (_objstruct/angle-get wtemp tptr)    
     add wtemp wtemp @1
     (/when (wtemp ge @360) {mov wtemp @0})
     (_objstruct/angle-set wtemp tptr) 
 
-    
-    adr x0 debug-flag:
-    ldr temp [x0]
-    sub temp temp @1
-    adr x0 debug-flag:
-    str temp [x0]
+
+    ; only once code
+    ;; adr x0 debug-flag:
+    ;; ldr temp [x0]
+    ;; sub temp temp @1
+    ;; adr x0 debug-flag:
+    ;; str temp [x0]
 
     
     
@@ -1703,7 +1793,9 @@ error_invalid_el0_32:
   ldr w10 lastside:
   mov w11 @0
   sub w11 w11 @1
-  (/when (w10 ne w11) (preserve [x1 x2 x3 x4] { bl ScalePost: }))
+  (/when (w10 ne w11) (preserve [x1 x2 x3 x4] {
+                                               bl ScalePost:
+                                                  }))
 
   ;lastside = 1
   mov x10 @1
@@ -2675,7 +2767,7 @@ error_invalid_el0_32:
        [tile w5]
        [offset x6])
 
-      [x1 x2 x3 x4 x5 x6] {
+      [x1 x2 x3 x4 x5 x6] (
 
   ; setup the walls and actors
   ; x1 will point at the raw map data for level 1
@@ -2704,7 +2796,7 @@ error_invalid_el0_32:
   })
   
     
-})
+))
 
 (subr spawn-player
       ([tilex x1]
@@ -2911,6 +3003,21 @@ error_invalid_el0_32:
 :finished-rendering (write-value-64 0)
 :frame-count (write-value-64 0)
 :execute-once (write-value-64 0)
+:time (write-value-64 0)
+:sizes
+(write-value-32 1)
+(write-value-32 2)
+(write-value-32 4)
+(write-value-32 8)
+(write-value-32 16)
+(write-value-32 32)
+(write-value-32 64)
+(write-value-32 128)
+(write-value-32 256)
+(write-value-32 512)
+(write-value-32 1024)
+(write-value-32 2048)
+(write-value-32 0)
 
 (define-syntax-parser execute-once
   ([_ body]

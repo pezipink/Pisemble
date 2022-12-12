@@ -78,6 +78,7 @@
 :SMICS (write-value-64 SMICS)
 })
 
+
 (define (init-uart) {
      ldr x1 ALT5:
      ldr x0 GPFSEL1:
@@ -100,11 +101,17 @@
      strb w1 [x0 @aux-lcr]      ; 8 bit mode
      mov  x1 @0
      strb w1 [x0 @aux-mcr]      ; set rts line high
-     (cond
-       [(equal? pi 'pi3) {mov x1 @270}]
-       [(equal? pi 'pi4) {mov x1 @541}]
-       [else (error "unsupported pi model")])
-     strh w1 [x0 @aux-baud]
+; note: dont se baud here, instead do it in the config 
+;
+;arm_freq=1400
+;over_voltage=5
+  ;;    (cond
+  ;; ;     [(equal? pi 'pi3) {mov x1 @270}]
+  ;;      [(equal? pi 'pi3) {mov x1 @1301}]
+  ;;      [(equal? pi 'pi4) {mov x1 @541}]
+
+  ;;      [else (error "unsupported pi model")])
+;     strh w1 [x0 @aux-baud]
      mov  x1 @3
      strb w1 [x0 @aux-cntrl]      ; enable tx rx
 
