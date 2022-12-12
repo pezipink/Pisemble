@@ -11,7 +11,6 @@ open Disarm
 //Disassembler.Disassemble(ResizeArray [| 0x580163A0u|], uint64 0)
 
 let port = new SerialPort("COM3",115200,Parity.None, 8, StopBits.One)
-
 port.Open()
 
 // in a waiting state, the next byte received determines the state to switch 
@@ -124,6 +123,8 @@ while true do
             state <- Waiting
             
     with
+    | :? System.TimeoutException  -> 
+        state <- Waiting
     | ex -> printfn $"Exception {ex} resetting to Waiting"
             state <- Waiting
 
