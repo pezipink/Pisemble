@@ -366,55 +366,47 @@
 
 :main
 
-    ;;     msr     cpacr_el1, x0	 // Enable FP/SIMD at EL1
-    (write-value-32 $d5181040)
-    
-    ; get ready to switch from EL3 down to EL1
-    ;; ldr     x0 SCTLR-VALUE-MMU-DISABLED:
-    ;; msr	    sctlr_el1 x0		
-
-    ldr     x0 HCR-VALUE:
-    msr     hcr_el2 x0
-
-    ldr     x0 SCR-VALUE:
-    msr     scr_el3 x0
-
-    ldr     x0 SPSR-VALUE:
-    msr     spsr_el3 x0
-
-    ; ===============
-    ; MMU
-
-    ldr x0 CPACR_EL1_VAL:
-    (write-value-32 $d5181040) ; msr cpacr_el1 x0
-
-    ldr x0 TCR_EL1_VAL:
-    (write-value-32 $d5182040) ; msr tcr_el1 x0
-
-    ldr x0 MAIR_VALUE:
-    (write-value-32 $d518a200) ; msr MAIR_EL1, x0
-    (write-value-32 $d539f220)
-    (write-value-32 $b27a0000)
-    (write-value-32 $d519f220)
-
-    ; end MMU
-    ; ==================
-    adr     x0 el1_entry:
-    msr     elr_el3 x0
-
-    eret			
-
-:el1_entry
-
-
-    ; Core entry point at Exception level 1 
-
     ; Set stack pointer 
     ldr x1 START:
     mov sp x1
 
+    ;;     msr     cpacr_el1, x0	 // Enable FP/SIMD at EL1
+    ;(write-value-32 $d5181040)
+
+    ; mmu el3 test
+    
+    ; setup the mini-uart for debug comms
+    (init-uart)
+    (debug-str "uart up1" #t)
+
+        ; set gpio 0 and 1 to output
+    ldr x0 GPFSEL:
+    mov x1 @%001001
+    str w1 [x0]
 
 
+    ;; adr x0 id_pgd:
+    ;; mov x1 @20
+    ;; bl memory-dump:
+    ;; mov x1 @300
+    ;; (load-immediate x3 $1000)
+    ;; add x0 x0 x3
+    ;; bl memory-dump:
+    
+    ;; ; write table locatio
+    ;; adr x0 id_pgd:
+    ;; (write-value-32 $d51e2000) ;  msr ttbr0_el3, x0
+
+    ;; ; flip mmu & cache enable bits
+
+    ;; ;; ldr     x0 SCTLR-VALUE-MMU-ENABLED:
+    ;; ;; msr	    sctlr_el1 x0		
+
+   (debug-str "done!!!" #t)
+    
+
+
+    
     ; =========== setup timer
 
     ;; nop
@@ -422,95 +414,6 @@
     (load-immediate x0 prescaler)
     str w0 [x1 @$8]
     
-
-    ; =========== enable mmu 
-
-    bl init-mmu:        
-    ; write table locatio
-    adr x0 id_pgd:
-    (write-value-32 $d5182000) ;  msr ttbr0_el1, x0
-
-    ; flip mmu & cache enable bits
-
-    ;; ldr     x0 SCTLR-VALUE-MMU-ENABLED:
-    ;; msr	    sctlr_el1 x0		
-
-    mrs x0 sctlr_el1
-    mov x1 @SCTLR_MMU_ENABLED
-    orr x0 x0 x1
-
-    mov x1 @SCTLR_I_CACHE_ENABLED
-    orr x0 x0 x1
-
-    mov x1 @SCTLR_D_CACHE_ENABLED
-    orr x0 x0 x1
-
-
-    msr sctlr_el1 x0
-
-    (write-value-32 $d5033f9f) ;dsb sy
-    (write-value-32 $d5033fdf) ; isb
-    ; ============== end mmu
-    
-    ; setup the mini-uart for debug comms
-    (init-uart)
-    (debug-str "uart up" #t)
-
-
-
-    ; SPEED TST CODE
-
-
-    adr x1 sizes:
-  :mloop2
-    ldr w2 [x1] @4
-    mov x9 x2
-    (debug-str-reg "KB:" x2)
-    cbz w2 mpause+
-
-    lsl w2 w2 @3
-
-    bl timer-start:
-    mov x3 @256
-
-  :mloop1
-    adr x0 textures-address:    
-    mov x8 x2
-  :mloop3
-    ;ldp x4 x5 [x0] @16 ; can't do this post increase yet
-    ldp x4 x5 [x0 @0] 
-    add x0 x0 @16
-    ldp x4 x5 [x0 @0] 
-    add x0 x0 @16
-    ldp x4 x5 [x0 @0] 
-    add x0 x0 @16
-    ldp x4 x5 [x0 @0] 
-    add x0 x0 @16
-    ldp x4 x5 [x0 @0] 
-    add x0 x0 @16
-    ldp x4 x5 [x0 @0] 
-    add x0 x0 @16
-    ldp x4 x5 [x0 @0] 
-    add x0 x0 @16
-    ldp x4 x5 [x0 @0] 
-    add x0 x0 @16
-    (write-value-32 $f1000508)
-;    sub x8 x8 @1
-    b.ne mloop3-
-    (write-value-32 $f1000463)
-;    sub x3 x3 @1
-    b.ne mloop1-
-
-    bl timer-stop:
-    udiv x0 x0 x9
-    (load-immediate x10 (quotient (* 1024 256 timerFrequency) (* 1024 1024)))
-    udiv x0 x10 x0
-    (debug-str-reg "MBytes per second " x0)
-    b mloop2-
-    
-    
-:mpause nop ;b mpause-
-    ; END SPEED TETS
 
 
     (debug-str "init irq vector" #t)    
@@ -591,7 +494,7 @@
     ;convert to gpu address
     ldr x1 CONVERT:
     and x0 x0 x1
-
+    (debug-str-reg "fb addr converted" x0)
 ; draw pixels!
      
      mov x8 x0  ; X8 holds base video memory
@@ -646,6 +549,89 @@
      ; now we can scroll using the virtual offset message
 
 
+     ;enable mmu
+         bl init-mmu:
+         (write-value-32 $d53e1000); mrs x0 sctlr_el3
+    mov x1 @SCTLR_MMU_ENABLED
+    orr x0 x0 x1
+
+    mov x1 @SCTLR_I_CACHE_ENABLED
+    orr x0 x0 x1
+
+    mov x1 @SCTLR_D_CACHE_ENABLED
+    orr x0 x0 x1
+
+
+    (write-value-32 $d51e1000) ;msr sctlr_el3 x0
+
+    (write-value-32 $d5033f9f) ;dsb sy
+    (write-value-32 $d5033fdf) ; isb
+;;     ; SPEED TST CODE
+
+    adr x0 textures-address:
+    (debug-str-reg "speed test at " x0)
+    adr x1 sizes:
+  :mloop2
+    ldr w2 [x1] @4
+    mov x9 x2
+    (debug-str-reg "KB:" x2)
+    cbz w2 mpause+
+
+    lsl w2 w2 @3
+
+    bl timer-start:
+    mov x3 @256
+
+  :mloop1
+    adr x0 textures-address:    
+    mov x8 x2
+  :mloop3
+    ;ldp x4 x5 [x0] @16 ; can't do this post increase yet
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    ldp x4 x5 [x0 @0] 
+    add x0 x0 @16
+    (write-value-32 $f1000508)
+;    sub x8 x8 @1
+    b.ne mloop3-
+    (write-value-32 $f1000463)
+;    sub x3 x3 @1
+    b.ne mloop1-
+
+    bl timer-stop:
+    udiv x0 x0 x9
+    (load-immediate x10 (quotient (* 1024 256 timerFrequency) (* 1024 1024)))
+    udiv x0 x10 x0
+    (debug-str-reg "MBytes per second " x0)
+    b mloop2-
+    
+    
+:mpause nop ;b mpause-
+    ; END SPEED TETS
+
+    mov x0 @1
+    (load-immediate x0 $3c000004)
+;    (write-value-32 $3c000004) 
+    (write-value-32 $f8404001) ; ldur x1 [x0 @4]
+    (debug-str "fine!" #t)
+    (load-immediate x0 $40000741)
+;    (load-immediate x0 $FE000000)
+;    (load-immediate x0 $f4200000)
+    ;; (write-value-32 $f8404001) ; ldur x1 [x0 @4]
+    ;; (debug-str "fine 2!" #t)
+    
      (debug-str "DONEDONE" #t)
 
     
@@ -662,124 +648,70 @@
  :loop
      b loop-
 
-  ENTRIES-PER-TABLE = 512
-  ENTRIES-PER-TABLE-1 = 511
 
-(define-syntax-parser create-table-entry
- [(_ tbl:register next-tbl:register va:register shift temp1:register temp2:register temp3:register)
-  #'{
-     lsr temp1 va @shift                ; table_index = va >> shift
-     mov temp2 @ENTRIES-PER-TABLE-1    
-     and temp1 temp1 temp2              ; table index &= entries-1
-     (load-immediate temp3 TD_KERNEL_TABLE_FLAGS)
-     orr temp2 next-tbl temp3           ; descriptor = next_tbl | flags
-     lsl temp1 temp1 @3                 ; table_index <<= 3
-     add temp1 temp1 tbl                ; table_index += tbl
-     str temp2 [temp1]                  ; [table_index] = descriptor
-     }])
 
-(define-syntax-parser create-block-map
- [(_ pmd:register vstart:register vend:register pa:register temp1:register temp2:register temp3:register temp4:register temp5:register)
-  #'{
-     ; vstart >>= section shift
-     lsr temp1 vstart @SECTION_SHIFT
-     ; vstart &= entries-1     
-     mov temp2 @ENTRIES-PER-TABLE-1    
-     and temp1 temp1 temp2
-
-     ; vend >>= section shfit
-     lsr temp2 vend @SECTION_SHIFT
-     ; vend--
-     sub temp2 temp2 @1
-     ;vend &= entries-1
-     mov temp3 @ENTRIES-PER-TABLE-1    
-     and temp2 temp2 temp3
-
-     lsr temp3 pa @SECTION_SHIFT
-     lsl temp3 temp3 @SECTION_SHIFT
-
- :do-loop
-     mov temp4 temp3 ; _pa = pa
-     (load-immediate temp5 $3B400000)
-;     (debug-str-reg "3b is " temp5)
-     (/if (temp3 ge temp5)
-          {
-           (load-immediate temp5 TD_DEVICE_BLOCK_FLAGS)
-           orr temp4 temp4 temp5
-           }
-          {
-           (load-immediate temp5 TD_KERNEL_BLOCK_FLAGS)
-           orr temp4 temp4 temp5
-           })
-     lsl temp5 temp1 @$3
-     add temp5 temp5 pmd
-     str temp4 [temp5]
-     (load-immediate temp4 SECTION_SIZE)
-     add temp3 temp3 temp4 ; pa += section size
-     add temp1 temp1 @1 ; vsize ++
-     (/when (temp1 le temp2) { b do-loop- })
-     
-   }])
-     
 :init-mmu
 nop
-(regs
- ([map_base x1]
-  [tbl x2]
-  [next_tbl x3]
-  [block_tbl x4]
-  [i x5]
-  [offset x6]
-  [offset_block x7]) {
-  mov map_base @0             ;map_base
-  adr tbl id_pgd:        ;tbl
-  (load-immediate x0 PAGE_SIZE)
-  add next_tbl tbl x0  ;next_tbl
-  ;  (load-immediate x4 PGD_SHIFT)
-  ;; (debug-str "create-table-entry main" #t)
-  ;; (debug-str-reg "tbl " tbl)
-  ;; (debug-str-reg "next_tbl " next_tbl)
-  ;; (debug-str-reg "map_base " map_base)
-  (create-table-entry tbl next_tbl map_base PGD_SHIFT x10 x11 x12)
-  (load-immediate x0 PAGE_SIZE)
-  add tbl tbl x0  ; tbl += page size
-  add next_tbl next_tbl x0  ; next_tbl += page size
-  mov block_tbl tbl     ; block_tbl = tbl
-  (/for {mov i @0} (i lt @4) {add i i @1} {
-   ;; (debug-str "create-table-entry " #t)
-   ;; (debug-str-reg "tbl " tbl)
-   ;; (debug-str-reg "next_tbl " next_tbl)
-   ;; (debug-str-reg "map_base " map_base)
+;(load-immediate x0 $3520)
+(load-immediate x0 $3520)
+;(write-value-32 $d5182040) ; msr tcr_el1 x0
+(write-value-32 $d51e2040) ; msr tcr_el3 x0
 
-   (create-table-entry tbl next_tbl map_base PUD_SHIFT x10 x11 x12)
 
-   (load-immediate x0 PAGE_SIZE)
-   add next_tbl next_tbl x0  ; next_tbl += page size
-   add block_tbl block_tbl x0  ; block_tbl += page size
-   (load-immediate x0 PUD_ENTRY_MAP_SIZE)
-   add map_base map_base x0  ; map_base += entry map size
+(load-immediate x0 $FF440400)
+;(write-value-32 $d518a200) ; msr MAIR_EL1, x0
+(write-value-32 $d51ea200) ; msr MAIR_EL3, x0
 
-   (load-immediate x0 BLOCK_SIZE)
-   mul offset x0 i    ; offset = blocksize * i
+adr x0 id_pgd:
+;(write-value-32 $d5182000) ;  msr ttbr0_el1, x0
+(write-value-32 $d51e2000) ;  msr ttbr0_el3, x0
 
-   add offset_block offset x0    ; offset_block = offset + blocksize
+; Set up translation table entries in memory with looped store instructions.
+; Set the level 1 translation table.
+; The first entry points to level2_pagetable.
+; location 0 points at level 2 which is 4096 later
+(load-immediate x3 $1000)
+add x10 x0 x3  ;x10 is base level2 address
+mov x3 @%11
+orr x1 x10 x3 ; 11 at end to set flags
+str x1 [x0] @8
 
-   ;; (debug-str "create-block-map " #t)
-   ;; (debug-str-reg "block-tbl " block_tbl)
-   ;; (debug-str-reg "offset " offset)
-   ;; (debug-str-reg "offset_block " offset_block)
+; AttrIdx=000 Device-nGnRnE.
+; The second entry is 1GB block from 0x40000000 to 0x7FFFFFFF.
+(load-immediate x2 $40000741)         ; Executable Inner and Outer Shareable.
+str x2 [x0] @8                        ; R/W at all ELs secure memory
 
-  (create-block-map block_tbl offset offset_block offset x10 x11 x12 x13 x14)
-   
-   
-  })
+; The third entry is 1GB block from 0x80000000 to 0xBFFFFFFF.
+(load-immediate x2 $80000741)
+;str x2 [x0] @8
 
-  ;; adr x0 id_pgd:
-  ;; mov x1 @(+ 4 (/ $6000 16))
-  ;;  bl memory-dump:
-})
-  ret x30
-     
+; The fourth entry is 1GB block from 0xC0000000 to 0xFFFFFFFF.
+(load-immediate x2 $C0000741) 
+;str x2 [x0] @8
+
+; Set level 2 translation table.
+mov x0 x10                       ; Base address of level2_pagetable.
+(load-immediate x2 $0000074D)    ; Executable Inner and Outer Shareable.
+
+; R/W at all ELs secure memory.
+; AttrIdx=011 Normal Cacheable.
+mov x4 @512
+(load-immediate x3 $200000)
+mov x1 @$c
+:loop
+  str x2 [x0] @8
+  add x2 x2 x3  ; increase 2mb
+; 
+cmp x4 @$20
+; cmp x4 @480
+  b.ne doCache+
+  eor x2 x2 x1 ; @$c
+:doCache
+ (write-value-32 $f1000484)
+  b.ne loop-
+
+ret x30
+
 (create-send-char)
 
 
@@ -810,7 +742,7 @@ nop
      mov input @$2E  ;; '.'
     :done}])
 
-(define dump-template "0000000000000000 : 00 00 00 00 | 00 00 00 00 | 00 00 00 00 | 00 00 00 00 | 0000000000000000")
+
 
 (subr timer-start () [x0 x1]  {
   (load-immediate x0 TIMERBase)
@@ -825,13 +757,14 @@ nop
   ldr w1 time:     ;time at start
   sub x0 x0 x1
 ;  (debug-str-reg "Time = " x0)
-})
+  })
 
+(define dump-template "0000000000000000 : 00 00 00 00 | 00 00 00 00 | 00 00 00 00 | 00 00 00 00 | 0000000000000000")
 (subr memory-dump () [x0 x1 x2 x3 x4 x5 x6 x7 x8] {
   ; arguments 
   ; x0 will be the start address
   ; x1 will be the amount of rows to send (* 4 32 bits + ascii)                                 
-  ; //////
+ ; //////
   ; we are going to write                                            
   ; 00000000000012FF : FF FF FF FF | FF FF FF FF | FF FF FF FF | FF FF FF FF | asciiasciiascii.
   ; now we can skip ahead four in the output and read the first 32 bit value
@@ -1083,6 +1016,10 @@ nop
 
 ; pass message address in x8
 (subr send-vcore-msg ()[x0 x1 x2 x3 x8]{
+
+     mov x0 x8
+     ; cache coherency
+     (write-value-32 $d50b7e20) ; dc civac, x0
      ldr x0 VC_MBOX: 
 :wait      
      ldr w1 (x0 @mbox-status)
@@ -1211,15 +1148,26 @@ error_invalid_el0_32:
 
 :irq-vector-init
   adr x0 vectors:
-  msr vbar_el1 x0
+;msr vbar_el1 x0
+  (write-value-32 $d51ec000) ;  msr vbar_el3 x0
   ret x30
 
 
 
 (subr enable-interrupt-controller () [x0 x1] {
-  ;; ldr x0 ENABLE_IRQS_1:
-  ;; mov x1 @SYSTEM_TIMER_IRQ_1      
-  ;; str w1 (x0 @0)
+  ; handle interrupts at el3                                            
+  mrs x0 scr_el3
+  ; Abort / SError     
+  mov x1 @%1000
+  orr x0 x0 x1
+  ; fiq 
+  mov x1 @%100
+  orr x0 x0 x1
+  ; irq
+  mov x1 @%10
+  orr x0 x0 x1
+  msr scr_el3 x0
+
   ldr x0 ENABLE_IRQS_2:
   ldr x1 FAKE-ISR: ; SMI 
   str w1 [x0]
@@ -1390,10 +1338,11 @@ error_invalid_el0_32:
                   [row-size x14]
                   ) [x0 x1 x2 x3 x4]
                     {
-
+(debug-str "en update" #t)
 :loop
     ldr w0 finished-rendering:
-    cbnz x0 loop-
+cbnz x0 loop-
+;(debug-str "render frame" #t)
     (flip-gpio1)
     bl get-back-buffer:
     mov vptr x0
@@ -1452,7 +1401,7 @@ error_invalid_el0_32:
     mov temp @1
     adr x0 finished-rendering:
     str temp [x0]
-
+;(debug-str "done frame" #t)
     (flip-gpio1)
     b loop-
 })
@@ -1506,7 +1455,9 @@ error_invalid_el0_32:
    ldr colour [ptr]
 
    (/for { } (y lt @VIEWHEIGHT) (inc y) {
-     (/for { mov x @0 } (x lt @$50) (inc x) {                                                       str colour [vptr]
+     (/for { mov x @0 } (x lt @$50) (inc x) {
+         str colour [vptr]
+
          str colour [vptr @4]
          str colour [vptr @8]
          str colour [vptr @12]
@@ -2686,9 +2637,9 @@ error_invalid_el0_32:
 ; has actualy finished
 (subr handle-irq () [] {
 ;(debug-str "handled interrupt" #t)
-;; ldr x0 TIMER_CS:
-;; mov x1 @%10
-;; str w1 (x0 @0)
+;; ;; ldr x0 TIMER_CS:
+;; ;; mov x1 @%10
+;; ;; str w1 (x0 @0)
   ldr x0 SMICS:  ; ack vsync
   mov x1 @0
   str w1 [x0]
@@ -2711,12 +2662,14 @@ error_invalid_el0_32:
   ;bl update-gfx:
 
   adr x1 finished-rendering:
+
   mov x2 @0
   str w2 [x1]
 
   
   :quit
-    (flip-gpio0)})
+(flip-gpio0)
+})
 
 
 ; //////////////////////////////////////////////
@@ -2767,7 +2720,7 @@ error_invalid_el0_32:
        [tile w5]
        [offset x6])
 
-      [x1 x2 x3 x4 x5 x6] (
+      [x1 x2 x3 x4 x5 x6] {
 
   ; setup the walls and actors
   ; x1 will point at the raw map data for level 1
@@ -2784,7 +2737,8 @@ error_invalid_el0_32:
   (/for { mov y @0 } (y lt @MAP_HEIGHT) (inc y) {
     (/for { mov x @0 } (x lt @MAP_WIDTH) (inc x) {
       ldrh tile [raw-ptr] @2
-      (/when (tile lt @AREATILE) {                                                         
+      (/when (tile lt @AREATILE) {
+
         ; lvlptr = tilemap: + (64 * x) + y
         adr lvl-ptr tilemap:
         lsl offset x @6 ; * 64
@@ -2796,7 +2750,7 @@ error_invalid_el0_32:
   })
   
     
-))
+})
 
 (subr spawn-player
       ([tilex x1]
@@ -2980,7 +2934,6 @@ error_invalid_el0_32:
   :VC_MBOX (write-value-64 VCORE-MBOX)
   :TEST (write-value-64 $123456789ABCDEF)
 :START (write-value-64 $800000) ; stack location
-
 :CONVERT (write-value-64 $3FFFFFFF)
 :HCR-VALUE (write-value-64 HCR_VALUE)
 :SCTLR-VALUE-MMU-DISABLED (write-value-64 SCTLR_VALUE_MMU_DISABLED2)
