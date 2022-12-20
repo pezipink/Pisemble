@@ -373,39 +373,16 @@
     ;;     msr     cpacr_el1, x0	 // Enable FP/SIMD at EL1
     ;(write-value-32 $d5181040)
 
-    ; mmu el3 test
-    
     ; setup the mini-uart for debug comms
     (init-uart)
     (debug-str "uart up1" #t)
 
-        ; set gpio 0 and 1 to output
+    ; set gpio 0 and 1 to output
     ldr x0 GPFSEL:
     mov x1 @%001001
     str w1 [x0]
 
-
-    ;; adr x0 id_pgd:
-    ;; mov x1 @20
-    ;; bl memory-dump:
-    ;; mov x1 @300
-    ;; (load-immediate x3 $1000)
-    ;; add x0 x0 x3
-    ;; bl memory-dump:
-    
-    ;; ; write table locatio
-    ;; adr x0 id_pgd:
-    ;; (write-value-32 $d51e2000) ;  msr ttbr0_el3, x0
-
-    ;; ; flip mmu & cache enable bits
-
-    ;; ;; ldr     x0 SCTLR-VALUE-MMU-ENABLED:
-    ;; ;; msr	    sctlr_el1 x0		
-
    (debug-str "done!!!" #t)
-    
-
-
     
     ; =========== setup timer
 
@@ -415,16 +392,13 @@
     str w0 [x1 @$8]
     
 
-
     (debug-str "init irq vector" #t)    
     ; setup IRQ vectors 
     bl irq-vector-init:
-;    (debug-str"init ic" #t)
     ; switch on interrupt conteroller
     ; for wolf this is the SMI interrupt only at the moment
     ; which is triggered by the screen vsync signal
     bl enable-interrupt-controller:
-;    (debug-str "enable irq" #t)
     ; clear the SMICS flag just in case.
     ; we won't enable the interrupts just yet
     ldr x0 SMICS:
@@ -432,16 +406,11 @@
     str w1 [x0]
 
     ; now we are going to ask for a frame buffer
-;    (debug-str "value before:" #t)
     adr x0 MBOX-MSG:
     (debug-reg w0)
-    ;    add x0 x0 @24
     ldrb w0 (x0 @0)
     (debug-reg w0)
     
-    ;; adr x0 tilemap:
-    ;; mov x1 @256
-    ;; bl memory-dump:
     (debug-str "loading level.." #t)
     bl setup-game-level:
     bl scan-info-plane:
@@ -458,100 +427,38 @@
     adr x1 costable: ; index 0 seems to be 65537 instead of 65536!? check this
     str x0 [x1]
     (debug-str-reg "costable address " x0)
-
-    
-    ;    adr x1 disassemble-dump:
-    ;; mov x1 @0
-    ;; mov x2 @512
-    ;; bl disassemble-dump:
-    
-    ;; adr x0 tilemap:
-    ;; mov x1 @256
-    ;; bl memory-dump:
                
-    (debug-str "fb addr nefore" #t)
     adr x0 fb:
     ldr w0 [x0]
-    (debug-reg x0)
+
     adr x8 MBOX-MSG:
+    ; send framebuffer request
     bl send-vcore-msg:
     (debug-str "bpl" #t)
 
     adr x0 bpl:
-    ;     add x0 x0 @20
     ldr w0 (x0 @0)
     (debug-reg x0)
 
-
-    ; set alpha
-;    bl set-alpha-mode:
-    
     (debug-str "fb addr" #t)
     adr x0 fb:
-    ;     add x0 x0 @20
     ldr w0 (x0 @0)
     (debug-reg x0)
+
     ;convert to gpu address
     ldr x1 CONVERT:
     and x0 x0 x1
     (debug-str-reg "fb addr converted" x0)
-; draw pixels!
-     
-     mov x8 x0  ; X8 holds base video memory
-     adr x9 VMEM:
-     str x8 (x9 @0)  ; store memory pointer in VMEM
-     (debug-str-reg "vptr is " x8)
-     mov x1 @255
-     lsl x1 x1 @32
-     movk x1 @255
-;     lsl x1 x1 @32
-;     movk x1 @255
-;     lsl x1 x1 @8
-:draw
-     mov x4 @height  ; rows
-:row     
-     mov x3 @(/ width 8)
-:col
-     ;; str x1 (x0 @0)
-     ;; str x1 (x0 @8)
-     ;; str x1 (x0 @16)
-     ;; str x1 (x0 @24)
-     add x0 x0 @32
-;     add w1 w1 @1
-     sub x3 x3 @1
-     cbnz x3 col-
 
-     sub x4 x4 @1
-     cbnz x4 row-
-; second page 
+    mov x8 x0  ; X8 holds base video memory
+    adr x9 VMEM:
+    str x8 (x9 @0)  ; store memory pointer in VMEM
 
-;    mov x1 @$FF00  ; comment this line to keep colour same (stop flashing page flip!)
-    mov x1 @$FF00
-    lsl x1 x1 @16
-    
-:draw
-     mov x4 @height  ; rows
-:row     
-     mov x3 @(/ width 8)
-:col
-     ;; str x1 (x0 @0)
-     ;; str x1 (x0 @8)
-     ;; str x1 (x0 @16)
-     ;; str x1 (x0 @24)
-     add x0 x0 @32
-;     add w1 w1 @1
-     sub x3 x3 @1
-     cbnz x3 col-
+    (debug-str-reg "vptr is " x8)
+    ;enable mmu
+    bl init-mmu:
+    (write-value-32 $d53e1000); mrs x0 sctlr_el3
 
-     sub x4 x4 @1
-     cbnz x4 row-
-     mov x0 x8
-     ; now we can scroll using the virtual offset message
-
-
-     ;enable mmu
-         bl init-mmu:
-         (write-value-32 $d53e1000); mrs x0 sctlr_el3
     mov x1 @SCTLR_MMU_ENABLED
     orr x0 x0 x1
 
@@ -566,7 +473,9 @@
 
     (write-value-32 $d5033f9f) ;dsb sy
     (write-value-32 $d5033fdf) ; isb
-;;     ; SPEED TST CODE
+    ; mmu done 
+
+    ; SPEED TEST CODE
 
     adr x0 textures-address:
     (debug-str-reg "speed test at " x0)
@@ -618,52 +527,38 @@
     b mloop2-
     
     
-:mpause nop ;b mpause-
-    ; END SPEED TETS
+:mpause nop 
+    ; END SPEED TEST
 
-    mov x0 @1
-    (load-immediate x0 $3c000004)
-;    (write-value-32 $3c000004) 
-    (write-value-32 $f8404001) ; ldur x1 [x0 @4]
-    (debug-str "fine!" #t)
-    (load-immediate x0 $40000741)
-;    (load-immediate x0 $FE000000)
-;    (load-immediate x0 $f4200000)
-    ;; (write-value-32 $f8404001) ; ldur x1 [x0 @4]
-    ;; (debug-str "fine 2!" #t)
-    
      (debug-str "DONEDONE" #t)
 
-    
+
+     ; begin triggering the vsync interrupt
      bl enable-irq:
 
      mov x1 @0
      mov x28 @105  ; 130 for 2d pics, 105 for textures
      mov x27 @60
 
-          mov x1 @15
-          ;     bl render-pic:
-;     bl dump-regs:
+     mov x1 @15
+     ;     bl render-pic:
      bl update-gfx:
  :loop
      b loop-
 
 
-
 :init-mmu
-nop
-;(load-immediate x0 $3520)
+
+; 4k granule, 4gb sapce
 (load-immediate x0 $3520)
-;(write-value-32 $d5182040) ; msr tcr_el1 x0
 (write-value-32 $d51e2040) ; msr tcr_el3 x0
 
-
+; 2 memory attributes for normal cacheable and device memory
 (load-immediate x0 $FF440400)
-;(write-value-32 $d518a200) ; msr MAIR_EL1, x0
 (write-value-32 $d51ea200) ; msr MAIR_EL3, x0
 
+; set translation table base
 adr x0 id_pgd:
-;(write-value-32 $d5182000) ;  msr ttbr0_el1, x0
 (write-value-32 $d51e2000) ;  msr ttbr0_el3, x0
 
 ; Set up translation table entries in memory with looped store instructions.
@@ -689,25 +584,27 @@ str x2 [x0] @8                        ; R/W at all ELs secure memory
 (load-immediate x2 $C0000741) 
 ;str x2 [x0] @8
 
-; Set level 2 translation table.
+; Set level 2 translation table. 512 x 2mb blocks
 mov x0 x10                       ; Base address of level2_pagetable.
 (load-immediate x2 $0000074D)    ; Executable Inner and Outer Shareable.
 
 ; R/W at all ELs secure memory.
 ; AttrIdx=011 Normal Cacheable.
+
 mov x4 @512
 (load-immediate x3 $200000)
 mov x1 @$c
 :loop
   str x2 [x0] @8
   add x2 x2 x3  ; increase 2mb
-; 
-cmp x4 @$20
-; cmp x4 @480
+  ; the last 32mb we mark as device memory since the periphs are here.
+  ; 32mb is too much really but also covers the area where the vcore
+  ; gives us a framebuffer
+  cmp x4 @$20  
   b.ne doCache+
-  eor x2 x2 x1 ; @$c
+  eor x2 x2 x1 ; @$c - from 74d to 741 which selects the other attribute
 :doCache
- (write-value-32 $f1000484)
+ (write-value-32 $f1000484) ;; subs
   b.ne loop-
 
 ret x30
@@ -1293,8 +1190,6 @@ error_invalid_el0_32:
     add iptr offset temp
     ; now we are ready to copy
 
-
-
     mov y height
 :y-loop
     mov x width
@@ -1312,16 +1207,13 @@ error_invalid_el0_32:
     sub x x @1
     cbnz x x-loop-
 
-
     sub y y @1
-
 
     ; move down a row in video memory
     sub vptr vptr rowsize
     add vptr vptr screen-rowsize
 
     cbnz y y-loop-
-
           
     })
 
@@ -1331,14 +1223,13 @@ error_invalid_el0_32:
 ; clear screen then call other rendering functions
 (subr update-gfx  (
                    [temp x4] ; temporary / intermediates
-                    [wtemp w5]
-                  [tptr x8]
-                  [vptr x9] ; video memory pointer
-                  [vptr-bak x10]
-                  [row-size x14]
-                  ) [x0 x1 x2 x3 x4]
+                   [wtemp w5]
+                   [tptr x8]
+                   [vptr x9] ; video memory pointer
+                   [vptr-bak x10]
+                   [row-size x14]
+                   ) [x0 x1 x2 x3 x4]
                     {
-(debug-str "en update" #t)
 :loop
     ldr w0 finished-rendering:
 cbnz x0 loop-
@@ -1376,8 +1267,8 @@ cbnz x0 loop-
     mov x1 vptr-bak
 ;    (debug-str "debg " #t)
     (preserve [x4 x8 x9 x10 x14] {
-    bl ThreeDRefresh:   ; raycaster
-       })
+      bl ThreeDRefresh:   ; raycaster
+    })
 
     ; rotate player
     ldr tptr player:
@@ -1394,8 +1285,6 @@ cbnz x0 loop-
     ;; adr x0 debug-flag:
     ;; str temp [x0]
 
-    
-    
     :done
     ;signal render has finished
     mov temp @1
@@ -1435,9 +1324,10 @@ cbnz x0 loop-
    add ptr ptr temp
    ldr colour [ptr]
 
+   xsteps = (/ 320 4)
    ; ceiling hardcoded to palette $1d for now
    (/for { mov y @0 } (y lt @(/ VIEWHEIGHT 2)) (inc y) {
-     (/for { mov x @0 } (x lt @$50) (inc x) {                                                   
+     (/for { mov x @0 } (x lt @xsteps) (inc x) {                                                   
          str colour [vptr]
          str colour [vptr @4]
          str colour [vptr @8]
@@ -1455,7 +1345,7 @@ cbnz x0 loop-
    ldr colour [ptr]
 
    (/for { } (y lt @VIEWHEIGHT) (inc y) {
-     (/for { mov x @0 } (x lt @$50) (inc x) {
+     (/for { mov x @0 } (x lt @xsteps) (inc x) {
          str colour [vptr]
 
          str colour [vptr @4]
@@ -1464,8 +1354,7 @@ cbnz x0 loop-
          add vptr vptr @16
      })
    })
-
-   })
+})
 (subr ScalePost
       ([vptr x1]
 
@@ -1594,7 +1483,6 @@ cbnz x0 loop-
 
 (subr HitHorizWall
       ([vptr x1]
-
        [wallpic w2]
        [texture w3]
        [ptr x4]
