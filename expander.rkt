@@ -1078,7 +1078,22 @@
     (pattern sctlr_el1 #:with regnum #x4080)
     (pattern elr_el1 #:with regnum #x4201)
     (pattern daifset #:with regnum #x1a06)
-    (pattern daifclr #:with regnum #x1a07))
+    (pattern daifclr #:with regnum #x1a07)
+    ; generic form s<op0>_<op1>_c<crn>_c<crm>_<op2>, e.g. s3_0_c15_c2_0
+    (pattern x:id
+             #:do [(define m (regexp-match #rx"^s([0-9]+)_([0-9]+)_c([0-9]+)_c([0-9]+)_([0-9]+)$"
+                                           (symbol->string (syntax-e #'x))))
+                   (define packed
+                     (and m
+                          (let-values ([(op0 op1 crn crm op2) (apply values (map string->number (cdr m)))])
+                            (and (<= 2 op0 3) (<= op1 7) (<= crn 15) (<= crm 15) (<= op2 7)
+                                 (+ (arithmetic-shift (- op0 2) 14)
+                                    (arithmetic-shift op1 11)
+                                    (arithmetic-shift crn 7)
+                                    (arithmetic-shift crm 3)
+                                    op2)))))]
+             #:when packed
+             #:with regnum packed))
 
   (define-syntax-class condition
     #:description "condition"
@@ -1171,11 +1186,16 @@
                    (define isW (or (eq? (string-ref str 0) #\W)
                                    (eq? (string-ref str 0) #\w)))
                    (define isSp  (equal? str "sp" ))
+                   (define isWsp (equal? str "wsp"))
                    (define isZ  (or (equal? str "xzr" ) (equal? str "wzr" )))
+                   (define isFp (equal? str "fp"))
+                   (define isLr (equal? str "lr"))
                    (define num
-                     (if (or isSp isZ) #b11111
-                         (string->number (substring str 1))))]
-             #:when (or isSp (and (or isX isW) (and (<= num 31)(>= num 0))))
+                     (cond [(or isSp isWsp isZ) #b11111]
+                           [isFp 29]
+                           [isLr 30]
+                           [else (string->number (substring str 1))]))]
+             #:when (or isSp isWsp isFp isLr (and (or isX isW) (and (<= num 31)(>= num 0))))
              #:with regnum num
              #:with is32 isW))
   (define-syntax-class fpu-register
@@ -1250,6 +1270,7 @@
         (write-instruction 'oc 'imm16-only #f '() (list n) #f))]
 ;   msr daifset @2
    [(_ (~optional label:label) oc:opcode sr:system-register #:immediate n)
+     #:when (not (regexp-match? #rx"^s[0-9]+_" (symbol->string (syntax-e #'sr))))
      #'(begin
          (~? (try-set-jump-source `label set-jump-source-current))
          (write-instruction 'oc 'sysreg-imm4 #f (list `sr.regnum) (list n) #f))]

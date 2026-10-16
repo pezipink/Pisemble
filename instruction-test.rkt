@@ -205,6 +205,18 @@
  (ldp x1 x2 [sp @-16]     $E10B7FA9)
  (stp x1 x2 [sp @16]      $E10B01A9)
 
+ ;register aliases wsp, fp, lr
+ (ret lr                  $C0035FD6)
+ (add fp sp @16           $FD430091)
+ (stp fp lr [sp @-16] !   $FD7BBFA9)
+ (ldp fp lr [sp] @16      $FD7BC1A8)
+ (add w0 wsp @0           $E0030011)
+ (ldr x0 [fp @8]          $A00740F9)
+
+ ;generic system registers s<op0>_<op1>_c<crn>_c<crm>_<op2>
+ (mrs x0 s3_0_c15_c2_0    $00F238D5)
+ (msr s3_0_c15_c2_0 x0    $00F218D5)
+
  ;phase 2 shifted register operands
  (add x0 x1 x2 LSL @4     $2010028B)
  (add x0 x1 x2 LSR @4     $2010428B)
