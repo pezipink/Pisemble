@@ -241,6 +241,47 @@
   (ldar x0 [x1]            $20FCDFC8)
   (stlr x0 [x1]            $20FC9FC8)
   (stlr w0 [x1]            $20FC9F88)
+
+ ;shifted flag setting and logical operands
+ (adds x0 x1 x2 LSL @4    $201002AB)
+ (subs x0 x1 x2 LSR @4    $201042EB)
+ (ands x0 x1 x2 LSL @4    $201002EA)
+ (bics x0 x1 x2 LSR @4    $201062EA)
+ (orn x0 x1 x2 LSL @4     $201022AA)
+ (orr x0 x1 x2 LSR @4     $201042AA)
+
+ ;register offset stores and byte loads
+ (str x0 [x1 x2]          $206822F8)
+ (str w0 [x1 x2 LSL @2]   $207822B8)
+ (strh w0 [x1 x2 LSL @1]  $20782278)
+ (ldrb w0 [x1 x2]         $20686238)
+
+ ;32 bit divide and rotate, cset with a non-trivial condition
+ (sdiv w0 w1 w2           $200CC21A)
+ (ror w0 w1 w2            $202CC21A)
+ (cset x0 lt              $E0A79F9A)
+
+ ;scalar single precision fp
+ (fabs s0 s1              $20C0201E)
+ (fadd s0 s1 s2           $2028221E)
+ (fcmp s1 s2              $2020221E)
+ (fcmp s0 @0              $0820201E)
+ (fcvtzs w1 s2            $4100381E)
+ (fcvtzs x0 s0            $0000389E)
+ (fdiv s0 s1 s2           $2018221E)
+ (fmov s1 w2              $4100271E)
+ (fmov w1 s2              $4100261E)
+ (fmov s0 s1              $2040201E)
+ (fmov s0 @1.5            $00102F1E)
+ (fmul s0 s1 s2           $2008221E)
+ (fneg s0 s1              $2040211E)
+ (fsqrt s0 s1             $20C0211E)
+ (fsub s0 s1 s2           $2038221E)
+ (ldr s0 [x1 @8]          $200840BD)
+ (ldr s0 [x1]             $200040BD)
+ (str s0 [x1 @8]          $200800BD)
+ (scvtf s1 w2             $4100221E)
+ (scvtf s1 x2             $4100229E)
  )
   
 })
