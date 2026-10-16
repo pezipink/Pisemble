@@ -1,0 +1,211 @@
+#lang pisemble
+(require (for-syntax syntax/parse racket/stxparam))
+
+(define (assert-32 expected msg)
+  (let* ([a (vector-ref (context-data prog) (- (context-location prog) 4))]
+         [b (vector-ref (context-data prog) (- (context-location prog) 3))]
+         [c (vector-ref (context-data prog) (- (context-location prog) 2))]
+         [d (vector-ref (context-data prog) (- (context-location prog) 1))]
+         [actual (bitwise-ior
+                  (arithmetic-shift a 24)
+                  (arithmetic-shift b 16)
+                  (arithmetic-shift c 8)
+                  d)])
+    (when (not (eq? actual expected))
+      (begin(writeln (format "~s : expected ~x actual ~x" msg expected actual))
+            (pbin expected)
+            (pbin actual)
+            ))))
+
+
+(define-syntax (inner stx)
+  (syntax-parse stx
+    [(_ expr ...)
+     #:with lst  (syntax->datum #'(expr ...))
+     #''lst]))
+
+(define-syntax (test stx)
+  (syntax-parse stx
+    [(_ (expr ... expected ) ...)
+     #'(begin
+         (begin
+           (arm-line expr ...)
+           (assert-32 expected (inner expr ...))) ...)
+  ]))
+
+
+
+; (add x0 x0 x0        $0       )    
+(aarch64 "instruction-test.img" []{
+ (test
+ ;reg to reg mov
+ (mov x0 x1           $E00301AA)
+ (mov x0 x0           $E00300AA)
+ (mov x1 x0           $E10300AA)
+ (mov w1 w0           $E103002A)
+ ;16 bit immediate
+ (mov x0 @10          $400180D2)
+ (mov x0 @$FFFF       $E0ff9fd2)
+ (mov w0 @10          $40018052)
+ (mov w0 @$FFFF       $E0ff9f52)
+
+ (movz x0 @10              $400180D2) ; same as mov x0 @0
+ (movz w0 @$ffff LSL @16   $E0FFBF52)
+ (movz x0 @$ffff LSL @16   $E0FFBFD2)
+ (movz x0 @$ffff LSL @32   $E0FFDFD2)
+ (movz x0 @$ffff LSL @48   $E0ffFFD2)
+ (movz x0 @$30   LSL @16   $0006A0D2)
+ 
+ (movk x0 @10              $400180F2)
+ (movk w0 @$ffff LSL @16   $E0FFBF72)
+ (movk x0 @$ffff LSL @16   $E0FFBFF2)
+ (movk x0 @$ffff LSL @32   $E0FFDFF2)
+ (movk x0 @$ffff LSL @48   $E0FFFFF2)
+
+
+ ;ldrh and strh must divide immediate12 by 2
+ (strh w1 [x0 @$2A]   $01540079)
+ (ldrh w28 [x0 @$2A]  $1C544079)
+
+ (add x0 x0 x0        $8B      )
+ (add x0 x1 x2        $2000028B)
+ (add x0 x1 @10       $20280091)
+
+ (add w0 w0 w0        $B      )
+ (add w0 w1 w2        $2000020B)
+ (add w0 w1 @10       $20280011)
+
+ (sub x0 x0 x0        $CB      )
+ (sub x0 x1 x2        $200002CB)
+ (sub x0 x1 @10       $202800D1)
+
+ (sub w0 w0 w0        $4B      )
+ (sub w0 w1 w2        $2000024B)
+ (sub w0 w1 @10       $20280051)
+
+ (mul x0 x0 x0        $007C009B)
+ (mul x0 x1 x2        $207C029B)
+
+ (csel x0 x1 x2 gt    $20C0829A)
+ (csel w0 w1 w2 eq    $2000821A)
+ 
+
+ (lsl w0 w0 @1 $00781F53  )
+ (lsl w0 w0 @31 $00000153  )
+ (lsl x0 x0 @1 $00F87FD3  )
+ (lsl w7 w2 @2 $47741E53  )
+ (lsl w0 w0 @1 $00781F53  )
+ (lsl x7 x2 @2 $47F47ED3  )
+
+ (lsr w0 w0 @1  $007C0153  )
+ (lsr w0 w0 @31 $007C1F53  )
+
+ (lsr x0 x0 @1  $00FC41D3  )
+ (lsr x0 x0 @63 $00FC7FD3  )
+
+ (cmp x0 @10 $1F2800F1  )
+ (cmp w0 @10 $1F280071  )
+ (cmp x0 x2  $1F0002EB  )
+
+ ;phase 1 additions
+ (ret                 $C0035FD6)
+ (ret x30             $C0035FD6)
+ (br x1               $20001FD6)
+ (blr x1              $20003FD6)
+ (sdiv x0 x1 x2       $200CC29A)
+ (movn x0 @0          $00008092)
+ (movn x0 @1          $20008092)
+ (movn w0 @1          $20008012)
+ (movn x0 @$ffff LSL @16 $E0FFBF92)
+ (ldur x0 [x1 @-8]    $20805FF8)
+ (ldur x0 [x1 @8]     $208040F8)
+ (ldur w0 [x1 @8]     $208040B8)
+ (ldurb w0 [x1 @1]    $20104038)
+ (ldurh w0 [x1 @2]    $20204078)
+ (adds x0 x1 x2       $200002AB)
+ (adds x0 x1 @1       $200400B1)
+ (subs x0 x1 @1       $200400F1)
+ (subs x0 x1 x2       $200002EB)
+ (cmn x1 x2           $3F0002AB)
+ (cmn x1 @1           $3F0400B1)
+ (tst x1 x2           $3F0002EA)
+ (csinc x0 x1 x2 eq   $2004829A)
+ (cset x0 eq          $E0179F9A)
+ (cset w0 ne          $E0079F1A)
+ (clz x0 x1           $2010C0DA)
+ (clz w0 w1           $2010C05A)
+ (rbit x0 x1          $2000C0DA)
+ (rev16 x0 x1         $2004C0DA)
+ (svc @0              $010000D4)
+ (svc @1              $210000D4)
+ (hvc @0              $020000D4)
+ (smc @0              $030000D4)
+ (hlt @0              $000040D4)
+ (brk @$1234          $804622D4)
+ (dmb @15             $BF3F03D5)
+ (dsb @15             $9F3F03D5)
+ (isb @15             $DF3F03D5)
+ (dmb @9              $BF3903D5)
+ (wfi                 $7F2003D5)
+ (sev                 $9F2003D5)
+
+ ;phase 2 logical immediates and register ands
+ (and w0 w1 @$FF          $201C0012)
+ (and x0 x1 @$FF          $201C4092)
+ (and w0 w1 @-2           $20781F12)
+ (orr w0 w1 @$00FF00FF    $209C0032)
+ (orr x0 x1 @$8000000000000000 $200041B2)
+ (eor x0 x1 @$5555555555555555 $20F000D2)
+ (ands x0 x1 @$FF         $201C40F2)
+ (ands x0 x1 x2           $200002EA)
+
+ ;phase 2 variable shifts, multiplies and bitfield moves
+ (lsl x0 x1 x2            $2020C29A)
+ (lsr x0 x1 x2            $2024C29A)
+ (asr x0 x1 x2            $2028C29A)
+ (ror x0 x1 x2            $202CC29A)
+ (lsl w0 w1 w2            $2020C21A)
+ (madd x0 x1 x2 x3        $200C029B)
+ (madd w0 w1 w2 w3        $200C021B)
+ (msub x0 x1 x2 x3        $208C029B)
+ (mneg x0 x1 x2           $20FC029B)
+ (smulh x0 x1 x2          $207C429B)
+ (umulh x0 x1 x2          $207CC29B)
+ (ubfm x0 x1 @4 @7        $201C44D3)
+ (ubfm w0 w1 @4 @7        $201C0453)
+ (uxtb w0 w1              $201C0053)
+ (uxth w0 w1              $203C0053)
+ (ubfx x0 x1 @8 @8        $203C48D3)
+ (sbfm x0 x1 @4 @7        $201C4493)
+ (sbfx w0 w1 @4 @4        $201C0413)
+
+ ;phase 2 register offset loads and stores
+ (ldr x0 [x1 x2]          $206862F8)
+ (ldr x0 [x1 x2 LSL @3]   $207862F8)
+ (ldr w0 [x1 x2 LSL @2]   $207862B8)
+ (strb w0 [x1 x2]         $20682238)
+ (ldrh w0 [x1 x2 LSL @1]  $20786278)
+
+ ;phase 2 pre and post index pair loads and stores
+ (ldp x1 x2 [sp] @16      $E10BC1A8)
+ (ldp x1 x2 [sp @-16] !   $E10BFFA9)
+ (stp x1 x2 [sp @-16] !   $E10BBFA9)
+ (stp x1 x2 [sp] @16      $E10B81A8)
+
+ ;phase 2 shifted register operands
+ (add x0 x1 x2 LSL @4     $2010028B)
+ (add x0 x1 x2 LSR @4     $2010428B)
+ (add x0 x1 x2 ASR @4     $2010828B)
+ (sub w0 w1 w2 LSL @31    $207C024B)
+ (and x0 x1 x2 LSL @8     $2020028A)
+ (eor x0 x1 x2 LSR @1     $200442CA)
+
+ ;phase 2 sign extending loads
+ (ldrsw x0 [x1 @8]        $200880B9)
+ (ldrsb x0 [x1 @3]        $200C8039)
+ (ldrsb w0 [x1 @3]        $200CC039)
+ (ldrsh x0 [x1 @4]        $20088079)
+ (ldrsh w0 [x1 @4]        $2008C079)
+ )
+  
+})

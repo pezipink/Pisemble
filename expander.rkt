@@ -200,7 +200,7 @@
        [(list bin imm7)
         (when (>= imm7 (arithmetic-shift 1 7))
           (error (format "error: immediate value ~x is larger than 7 bits" imm7)))
-        (let ([immr (arithmetic-shift imm7 15)])
+        (let ([immr (arithmetic-shift (bitwise-and #b1111111 imm7) 15)])
           (bitwise-ior-n immr bin))])
      ]
     
@@ -228,6 +228,17 @@
           (error (format "error: immediate value ~x is larger than 12 bits" imm12)))
         (let ([imm (arithmetic-shift (bitwise-and #b111111111111 imm12) 10)])
           (bitwise-ior-n imm bin))])
+     ]
+
+    ['imm13-rn-rd
+     (match-lambda
+       [(list bin rd rn)
+        (bitwise-ior-n (arithmetic-shift rn 5) rd bin)])
+     (match-lambda
+       [(list bin imm13)
+        (when (>= imm13 (arithmetic-shift 1 13))
+          (error (format "error: encoded logical immediate ~x is larger than 13 bits" imm13)))
+        (bitwise-ior bin (arithmetic-shift imm13 10))])
      ]
 
     ['imm12-rn
@@ -258,6 +269,20 @@
 
     ; this needs more work
     ; the immeditadate value splits the register number
+    ['imm16-only
+     (match-lambda [(list bin) bin])
+     (match-lambda
+       [(list bin imm16)
+        (when (>= imm16 (arithmetic-shift 1 16))
+          (error (format "error: immediate value ~x is larger than 16 bits" imm16)))
+        (bitwise-ior bin (arithmetic-shift imm16 5))])]
+    ['barrier
+     (match-lambda [(list bin) bin])
+     (match-lambda
+       [(list bin crm)
+        (when (>= crm 16)
+          (error (format "error: barrier option ~x is larger than 4 bits" crm)))
+        (bitwise-ior (bitwise-and bin (bitwise-not #xF00)) (arithmetic-shift crm 8))])]
     ['sysreg-imm4
      (match-lambda
        [(list bin sr)
@@ -291,6 +316,38 @@
               [rm-shifted (arithmetic-shift rm 16)]
               [cond-shifted (arithmetic-shift con 12)])
           (bitwise-ior-n rd rn-shifted rm-shifted cond-shifted bin))])
+     (match-lambda
+       [(list bin) bin])
+     ]
+    ['rn-rd-immr-imms
+     (match-lambda
+       [(list bin rd rn)
+        (bitwise-ior-n (arithmetic-shift rn 5) rd bin)])
+     (match-lambda
+       [(list bin immr imms)
+        (bitwise-ior-n bin (arithmetic-shift immr 16) (arithmetic-shift imms 10))])
+     ]
+    ['rm-ra-rn-rd
+     (match-lambda
+       [(list bin rd rn rm ra)
+        (let ([rn-shifted (arithmetic-shift rn 5)]
+              [rm-shifted (arithmetic-shift rm 16)]
+              [ra-shifted (arithmetic-shift ra 10)])
+          (bitwise-ior-n rd rn-shifted rm-shifted ra-shifted bin))])
+     (match-lambda
+       [(list bin) bin])
+     ]
+    ['rm-option-s-rn-rd
+     (match-lambda
+       [(list bin rd rn rm s)
+        (bitwise-ior-n (arithmetic-shift rm 16) (arithmetic-shift s 12) (arithmetic-shift rn 5) rd bin)])
+     (match-lambda
+       [(list bin) bin])
+     ]
+    ['rm-shift-rn-rd
+     (match-lambda
+       [(list bin rd rn rm shift-bits)
+        (bitwise-ior-n (arithmetic-shift rm 16) (arithmetic-shift rn 5) rd shift-bits bin)])
      (match-lambda
        [(list bin) bin])
      ]
@@ -336,6 +393,15 @@
      (match-lambda
        [(list bin) bin])
      ]
+    ['rd-imm8
+     (match-lambda
+       [(list bin rd)
+        (bitwise-ior-n rd bin)])
+     (match-lambda
+       [(list bin imm8)
+        (bitwise-ior-n (arithmetic-shift imm8 13) bin)])
+     ]
+
     ['none
      (match-lambda
        [(list bin) bin])
@@ -354,6 +420,85 @@
           (cons opcode addressing-mode-type)
           (metadata opcode addressing-mode raw-value 32bit imm-mod)) ...))]))
 
+
+; the 8 bit immediate of FMOV (scalar, immediate) is abcdefgh, giving
+; (-1)^a * 2^(E-127) * (1 + efgh/16) where E = NOT(b):Replicate(b,5):cd
+(define (fp-imm8-value i)
+  (let* ([a (bitwise-bit-field i 7 8)]
+         [b (bitwise-bit-field i 6 7)]
+         [cd (bitwise-bit-field i 4 6)]
+         [efgh (bitwise-bit-field i 0 4)]
+         [e (+ (* (- 1 b) 128) (* b 31 4) cd)])
+    (* (if (= a 1) -1 1) (expt 2 (- e 127)) (/ (+ 16 efgh) 16))))
+
+(define (fp-imm8 imm is32?)
+  (let ([target (inexact->exact imm)])
+    (or (for/first ([i (in-range 256)] #:when (= (fp-imm8-value i) target)) i)
+        (error (format "fmov immediate ~a cannot be encoded as a single precision 8 bit float" imm)))))
+
+; returns the 13 bit N:immr:imms field for a bitmask immediate (and/orr/eor/ands)
+; a value is encodable when it is a rotated run of ones repeated across the register
+(define (encode-logical-immediate imm is32?)
+  (define w (if is32? 32 64))
+  (define mask (sub1 (arithmetic-shift 1 w)))
+  (when (or (< imm (- (arithmetic-shift 1 (sub1 w)))) (> imm mask))
+    (error (format "logical immediate ~a does not fit in ~a bits" imm w)))
+  (define v (bitwise-and imm mask))
+  (when (or (= v 0) (= v mask))
+    (error (format "logical immediate ~x can not be encoded, all zeros and all ones are not allowed" v)))
+  (define (replicates? e)
+    (define elem (bitwise-and v (sub1 (arithmetic-shift 1 e))))
+    (= v (for/fold ([acc 0]) ([k (in-range 0 w e)])
+           (bitwise-ior acc (arithmetic-shift elem k)))))
+  (define (ror x r e)
+    (bitwise-and (sub1 (arithmetic-shift 1 e))
+                 (bitwise-ior (arithmetic-shift x (- r))
+                              (arithmetic-shift x (- e r)))))
+  (define (candidate e)
+    (and (replicates? e)
+         (let* ([elem (bitwise-and v (sub1 (arithmetic-shift 1 e)))]
+                [s (for/sum ([k (in-range e)]) (if (bitwise-bit-set? elem k) 1 0))]
+                [immr (for/first ([r (in-range e)]
+                                  #:when (= (ror (sub1 (arithmetic-shift 1 s)) r e) elem))
+                        r)])
+           (and immr (list e s immr)))))
+  (define found (for/or ([e (in-list '(2 4 8 16 32 64))] #:when (<= e w)) (candidate e)))
+  (unless found
+    (error (format "logical immediate ~x can not be encoded in ~a bits" v w)))
+  (match-let ([(list e s immr) found])
+    (define n (if (= e 64) 1 0))
+    (define imms (bitwise-ior (bitwise-and (bitwise-not (sub1 (* 2 e))) #x3F) (sub1 s)))
+    (bitwise-ior (arithmetic-shift n 12) (arithmetic-shift immr 6) imms)))
+
+(define (bitfield-in-range imm is32?)
+  (define max-val (if is32? 31 63))
+  (if (or (< imm 0) (> imm max-val))
+      (error (format "bitfield immediate ~a must be between 0 and ~a" imm max-val))
+      imm))
+
+; S bit of a register offset load/store: LSL #0 or LSL #log2(access size)
+(define (register-offset-s-bit oc is32? amount)
+  (define log2-size (case oc [(ldrb strb) 0] [(ldrh strh) 1] [else (if is32? 2 3)]))
+  (cond
+    [(not amount) 0]
+    [(eqv? amount 0) 0]
+    [(eqv? amount log2-size) 1]
+    [else (error (format "~a register offset shift must be 0 or ~a, not ~a" oc log2-size amount))]))
+
+; shift type (bits 23:22) and amount (bits 15:10) of a shifted register operand
+(define (shifted-operand-bits kind is32? amount)
+  (define type (case kind [(LSL) 0] [(LSR) 1] [(ASR) 2]))
+  (define max-amount (if is32? 31 63))
+  (unless (and (exact-nonnegative-integer? amount) (<= amount max-amount))
+    (error (format "~a shift amount must be between 0 and ~a, not ~a" kind max-amount amount)))
+  (bitwise-ior (arithmetic-shift type 22) (arithmetic-shift amount 10)))
+
+; ldrsw only loads into x registers; ldrsb and ldrsh have a separate opcode for w destinations
+(define (sign-extending-load-mode oc is32?)
+  (cond
+    [(and (eq? oc 'ldrsw) is32?) (error "ldrsw destination must be an x register")]
+    [(and is32? (not (eq? oc 'ldrsw))) 'reg_reg-imm_w]
+    [else 'reg_reg-imm_]))
 
 (define opcode-metadata
   (let ([b31             #b01111111111111111111111111111111]
@@ -377,6 +522,10 @@
                (if (eq? 0 (bitwise-and #b111 imm))
                    (arithmetic-shift imm -3)
                    (error "not divisible by 8"))))]
+        [shift-2 (λ (imm is32?)
+                   (if (eq? 0 (bitwise-and #b11 imm))
+                       (arithmetic-shift imm -2)
+                       (error "not divisible by 4")))]
         [always-shift-1 (λ (imm is32?)
                           (if (eq? 0 (bitwise-and #b1 imm))
                               (arithmetic-shift imm -1)
@@ -390,6 +539,11 @@
     ['add 'reg-reg-reg   'rm-rn-rd                           #b10001011000000000000000000000000 b31 #f]
     ['adr 'reg-lbl       'immlo-immhi-rd                     #b00010000000000000000000000000000 #f #f]
     ['and 'reg-reg-reg   'rm-rn-rd                           #b10001010000000000000000000000000 b31 #f ]
+    ['and 'reg-reg-imm   'imm13-rn-rd                        #x92000000 b31 encode-logical-immediate]
+    ['ands 'reg-reg-imm  'imm13-rn-rd                        #xF2000000 b31 encode-logical-immediate]
+    ['ands 'reg-reg-reg  'rm-rn-rd                           #xEA000000 b31 #f]
+    ['orr 'reg-reg-imm   'imm13-rn-rd                        #xB2000000 b31 encode-logical-immediate]
+    ['eor 'reg-reg-imm   'imm13-rn-rd                        #xD2000000 b31 encode-logical-immediate]
     ['asr 'reg-reg-imm   'immr6-rn-rd                        #b10010011010000001111110000000000 lsr-imm-special #f]
     ['b   'lbl           'imm26                              #b00010100000000000000000000000000 #f #f]
 
@@ -420,6 +574,29 @@
     ['eret 'none         'none                               #b11010110100111110000001111100000 #f #f ]
 
     ['ldp 'reg-reg_reg-imm_ 'imm7-rd2-rn-rd                  #b10101001010000000000000000000000 b31 shift-2-or-3]
+     ['ldp 'reg-reg_reg_imm                                   'imm7-rd2-rn-rd #xA8C00000 b31 shift-2-or-3]
+     ['ldp 'reg-reg_reg-imm_excla                             'imm7-rd2-rn-rd #xA9C00000 b31 shift-2-or-3]
+     ['stp 'reg-reg_reg_imm                                   'imm7-rd2-rn-rd #xA8800000 b31 shift-2-or-3]
+     ['stp 'reg-reg_reg-imm_excla                             'imm7-rd2-rn-rd #xA9800000 b31 shift-2-or-3]
+     ['ldr  'reg_reg-reg-shift  'rm-option-s-rn-rd #xF8606800 b30 #f]
+     ['str  'reg_reg-reg-shift  'rm-option-s-rn-rd #xF8206800 b30 #f]
+     ['ldrb 'reg_reg-reg-shift  'rm-option-s-rn-rd #x38606800 #f #f]
+     ['strb 'reg_reg-reg-shift  'rm-option-s-rn-rd #x38206800 #f #f]
+     ['ldrh 'reg_reg-reg-shift  'rm-option-s-rn-rd #x78606800 #f #f]
+     ['strh 'reg_reg-reg-shift  'rm-option-s-rn-rd #x78206800 #f #f]
+     ['add  'reg-reg-reg-shift  'rm-shift-rn-rd #x8B000000 b31 #f]
+     ['adds 'reg-reg-reg-shift  'rm-shift-rn-rd #xAB000000 b31 #f]
+     ['sub  'reg-reg-reg-shift  'rm-shift-rn-rd #xCB000000 b31 #f]
+     ['subs 'reg-reg-reg-shift  'rm-shift-rn-rd #xEB000000 b31 #f]
+     ['and  'reg-reg-reg-shift  'rm-shift-rn-rd #x8A000000 b31 #f]
+     ['ands 'reg-reg-reg-shift  'rm-shift-rn-rd #xEA000000 b31 #f]
+     ['orr  'reg-reg-reg-shift  'rm-shift-rn-rd #xAA000000 b31 #f]
+     ['eor  'reg-reg-reg-shift  'rm-shift-rn-rd #xCA000000 b31 #f]
+     ['ldrsw 'reg_reg-imm_   'imm12-rn-rd #xB9800000 #f shift-2]
+     ['ldrsb 'reg_reg-imm_   'imm12-rn-rd #x39800000 #f #f]
+     ['ldrsb 'reg_reg-imm_w  'imm12-rn-rd #x39C00000 #f #f]
+     ['ldrsh 'reg_reg-imm_   'imm12-rn-rd #x79800000 #f always-shift-1]
+     ['ldrsh 'reg_reg-imm_w  'imm12-rn-rd #x79C00000 #f always-shift-1]
     ['ldr 'reg_reg_imm  'imm9-rn-rd                          #b11111000010000000000010000000000 b30 #f]
     ['ldr 'reg_reg-imm_excla  'imm9-rn-rd                    #b11111000010000000000110000000000 b30 #f]
 
@@ -435,6 +612,17 @@
     ['ldrb 'reg_reg-imm_ 'imm12-rn-rd                        #b00111001010000000000000000000000 #f  #f]
     ['lsl 'reg-reg-imm   'immr-imms-rn-rd                    #b11010011010000000000000000000000 lsl-imm-special lsl-in-range]
     ['lsr 'reg-reg-imm   'immr6-rn-rd                        #b11010011010000001111110000000000 lsr-imm-special #f]
+    ['lsl 'reg-reg-reg   'rm-rn-rd                           #x9AC02000 b31 #f]
+    ['lsr 'reg-reg-reg   'rm-rn-rd                           #x9AC02400 b31 #f]
+    ['asr 'reg-reg-reg   'rm-rn-rd                           #x9AC02800 b31 #f]
+    ['ror 'reg-reg-reg   'rm-rn-rd                           #x9AC02C00 b31 #f]
+    ['madd 'reg-reg-reg-reg 'rm-ra-rn-rd                     #x9B000000 b31 #f]
+    ['msub 'reg-reg-reg-reg 'rm-ra-rn-rd                     #x9B008000 b31 #f]
+    ; 64-bit only: the 32-bit forms are rejected by the arm-line clauses
+    ['smulh 'reg-reg-reg 'rm-rn-rd                           #x9B407C00 #f #f]
+    ['umulh 'reg-reg-reg 'rm-rn-rd                           #x9BC07C00 #f #f]
+    ['ubfm 'reg-reg-imm-imm 'rn-rd-immr-imms                 #xD3400000 #x7FBFFFFF bitfield-in-range]
+    ['sbfm 'reg-reg-imm-imm 'rn-rd-immr-imms                 #x93400000 #x7FBFFFFF bitfield-in-range]
 
     ['mov 'reg-reg       'rm-rd                              #b10101010000000000000001111100000 b31 #f]
     ; todo: not sure N here works always set to one with 32 bhit as well?
@@ -479,8 +667,57 @@
     ['sxtw 'reg-reg      'rn-rd                              #b10010011010000000111110000000000 #f  #f]
     
 
+    ; single precision FPU and FP load/store
+    ['fabs   'fp-fp          'rn-rd           #x1E20C000 #f #f]
+    ['fadd   'fp-fp-fp       'rm-rn-rd        #x1E202800 #f #f]
+    ['fcmp   'fp-fp          'rm-rn           #x1E202000 #f #f]
+    ['fcmp   'fp-zero        'rn              #x1E202008 #f #f]
+    ['fcvtzs 'gp-fp          'rn-rd           #x9E380000 b31 #f]
+    ['fdiv   'fp-fp-fp       'rm-rn-rd        #x1E201800 #f #f]
+    ['fmov   'fp-gp          'rn-rd           #x1E270000 #f #f]
+    ['fmov   'gp-fp          'rn-rd           #x1E260000 #f #f]
+    ['fmov   'fp-fp          'rn-rd           #x1E204000 #f #f]
+    ['fmov   'fp-imm         'rd-imm8         #x1E201000 #f fp-imm8]
+    ['fmul   'fp-fp-fp       'rm-rn-rd        #x1E200800 #f #f]
+    ['fneg   'fp-fp          'rn-rd           #x1E214000 #f #f]
+    ['fsqrt  'fp-fp          'rn-rd           #x1E21C000 #f #f]
+    ['fsub   'fp-fp-fp       'rm-rn-rd        #x1E203800 #f #f]
+    ['ldr    'fp-reg_reg-imm_ 'imm12-rn-rd    #xBD400000 #f shift-2]
+    ['scvtf  'fp-gp          'rn-rd           #x9E220000 b31 #f]
+    ['str    'fp-reg_reg-imm_ 'imm12-rn-rd    #xBD000000 #f shift-2]
+
     ['udiv 'reg-reg-reg  'rm-rn-rd                           #b10011010110000000000100000000000 b31 #f]
 
+    ['adds 'reg-reg-imm  'imm12-rn-rd                        #xB1000000 b31 #f]
+    ['adds 'reg-reg-reg  'rm-rn-rd                           #xAB000000 b31 #f]
+    ['subs 'reg-reg-imm  'imm12-rn-rd                        #xF1000000 b31 #f]
+    ['subs 'reg-reg-reg  'rm-rn-rd                           #xEB000000 b31 #f]
+    ['cmn  'reg-reg      'rm-rn                              #xAB00001F b31 #f]
+    ['cmn  'reg-imm      'imm12-rn                           #xB100001F b31 #f]
+    ['tst  'reg-reg      'rm-rn                              #xEA00001F b31 #f]
+    ['sdiv 'reg-reg-reg  'rm-rn-rd                           #x9AC00C00 b31 #f]
+    ['movn 'reg-imm      'imm16-rd                           #x92800000 b31 #f]
+    ['movn 'reg-imm-shift 'hw-imm16-rd                       #x92800000 b31 #f]
+    ['csinc 'reg-reg-reg-cond 'rm-cond-rn-rd                 #x9A800400 b31 #f]
+    ['br   'reg          'rn                                 #xD61F0000 #f #f]
+    ['blr  'reg          'rn                                 #xD63F0000 #f #f]
+    ['ret  'none         'none                               #xD65F03C0 #f #f]
+    ['clz  'reg-reg      'rn-rd                              #xDAC01000 b31 #f]
+    ['rbit 'reg-reg      'rn-rd                              #xDAC00000 b31 #f]
+    ['rev16 'reg-reg     'rn-rd                              #xDAC00400 b31 #f]
+    ['ldur  'reg_reg-imm_ 'imm9-rn-rd                        #xF8400000 b30 #f]
+    ['ldurb 'reg_reg-imm_ 'imm9-rn-rd                        #x38400000 #f #f]
+    ['ldurh 'reg_reg-imm_ 'imm9-rn-rd                        #x78400000 #f #f]
+    ['svc  'imm16-only   'imm16-only                         #xD4000001 #f #f]
+    ['hvc  'imm16-only   'imm16-only                         #xD4000002 #f #f]
+    ['smc  'imm16-only   'imm16-only                         #xD4000003 #f #f]
+    ['brk  'imm16-only   'imm16-only                         #xD4200000 #f #f]
+    ['hlt  'imm16-only   'imm16-only                         #xD4400000 #f #f]
+    ['dmb  'barrier      'barrier                            #xD50330BF #f #f]
+    ['dsb  'barrier      'barrier                            #xD503309F #f #f]
+    ['isb  'barrier      'barrier                            #xD50330DF #f #f]
+    ['wfi 'none          'none                               #xD503207F #f #f]
+    ['sev 'none          'none                               #xD503209F #f #f]
     ['wfe 'none          'none                               #b11010101000000110010000001011111 #f #f]))))
 
 (struct context (data location minl maxl jump-table branches-waiting linker-labels) #:mutable #:transparent)
@@ -704,7 +941,8 @@
         [final-address-encoder
          (match-lambda
            [(list bin) bin]
-           [(list bin imm) (address-encoder (list bin (imm-mod imm is-32bit?)))])]
+           [(list bin imm) (address-encoder (list bin (imm-mod imm is-32bit?)))]
+           [(list bin imm1 imm2) (address-encoder (list bin (imm-mod imm1 is-32bit?) (imm-mod imm2 is-32bit?)))])]
         [with-data (data-encoder (cons raw data-args))]
         [with-addr (final-address-encoder (cons with-data immediate-address-args))]
 
@@ -819,7 +1057,11 @@
                    (define ocs
                      (list 'add 'adr 'and 'asr 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
                            'bl 'cbz 'cbnz 'csel 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'nop
-                           'orr 'ret 'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'sxtb 'sxth 'sxtw 'udiv 'wfe))]
+                           'orr 'ret 'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'sxtb 'sxth 'sxtw 'udiv 'wfe
+                           'fabs 'fadd 'fcmp 'fcvtzs 'fdiv 'fmov 'fmul 'fneg 'fsqrt 'fsub
+                           'adds 'subs 'cmn 'tst 'ands 'sdiv 'movn 'csinc 'cset 'br 'blr 'clz 'rbit 'rev16
+                           'ldur 'ldurb 'ldurh 'svc 'hvc 'smc 'brk 'hlt 'dmb 'dsb 'isb 'wfi 'sev
+                           'madd 'msub 'ror 'ubfm 'sbfm 'ldrsw 'ldrsb 'ldrsh))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
     #:description "register"
@@ -841,30 +1083,19 @@
              #:when (or isSp (and (or isX isW) (and (<= num 31)(>= num 0))))
              #:with regnum num
              #:with is32 isW))
-    ;; (define-syntax-class fpu-register
-    ;; #:description "fpu-register"
-    ;; (pattern x:id
-      
-    ;;          #:do [; here we expand the identifier so this class works with
-    ;;                ; rename-transformer allowing the user to rename registers
-    ;;                (define actual (local-expand #'x 'expression #f))
-    ;;                (define str (symbol->string (syntax-e  actual)))
-    ;;                (define isB (or (eq? (string-ref str 0) #\B)
-    ;;                                (eq? (string-ref str 0) #\b)))
-    ;;                (define isH (or (eq? (string-ref str 0) #\H)
-    ;;                                (eq? (string-ref str 0) #\h)))
-    ;;                (define isS (or (eq? (string-ref str 0) #\S)
-    ;;                                (eq? (string-ref str 0) #\s)))
-    ;;                (define isD (or (eq? (string-ref str 0) #\D)
-    ;;                                (eq? (string-ref str 0) #\d)))
-    ;;                (define num
-    ;;                  (string->number (substring str 1)))
-
-    ;;                ]
-    ;;          #:when  (and (or isB isH isS isD) (and (<= num 31)(>= num 0)))
-    ;;          #:with regnum num
-             
-    ;;          #:with is32 (or isB isH isS)))
+  (define-syntax-class fpu-register
+    #:description "single precision fpu register"
+    (pattern x:id
+             #:do [; here we expand the identifier so this class works with
+                   ; rename-transformer allowing the user to rename registers
+                   (define actual (local-expand #'x 'expression #f))
+                   (define str (symbol->string (syntax-e  actual)))
+                   (define isS (or (eq? (string-ref str 0) #\S)
+                                   (eq? (string-ref str 0) #\s)))
+                   (define num
+                     (and isS (string->number (substring str 1))))]
+             #:when (and (exact-nonnegative-integer? num) (<= num 31))
+             #:with regnum num))
   (define-syntax-class register-32
     (pattern x:register
              #:when (syntax-e #'x.is32)))
@@ -894,6 +1125,17 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg #f (list `rn.regnum) '() #f))]
+   ; dmb @15, dsb @15, isb @15 (@n sets the barrier option)
+   [(_ (~optional label:label) oc:opcode #:immediate n)
+    #:when (memq (syntax-e #'oc) '(dmb dsb isb))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'barrier #f '() (list n) #f))]
+   ; svc @0, hvc @0, smc @0, brk @0, hlt @0
+   [(_ (~optional label:label) oc:opcode #:immediate n)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'imm16-only #f '() (list n) #f))]
 ;   msr daifset @2
    [(_ (~optional label:label) oc:opcode sr:system-register #:immediate n)
      #'(begin
@@ -950,6 +1192,15 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg_reg-imm_excla `rt.is32 (list `rt.regnum `rn.regnum) (list n) #f))]
+   ; ldrsw x0 [x1 @8], ldrsb x0 [x1 @3], ldrsh x0 [x1 @4]; w destinations select the _w opcode
+   [(_ (~optional label:label) (~and oc (~or (~datum ldrsw) (~datum ldrsb) (~datum ldrsh))) rt:register (rn:register #:immediate n))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc (sign-extending-load-mode 'oc `rt.is32) `rt.is32 (list `rt.regnum `rn.regnum) (list n) #f))]
+   [(_ (~optional label:label) (~and oc (~or (~datum ldrsw) (~datum ldrsb) (~datum ldrsh))) rt:register (rn:register))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc (sign-extending-load-mode 'oc `rt.is32) `rt.is32 (list `rt.regnum `rn.regnum) (list 0) #f))]
    ; stur x0 [x1 @10]
    [(_ (~optional label:label) oc:opcode rt:register (rn:register #:immediate n))
     #'(begin
@@ -970,21 +1221,149 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-reg_reg-imm_ `rt.is32 (list `rt.regnum `rt2.regnum `rn.regnum) (list n) #f))]
+   ; ldp x1 x2 [sp @-16] !   PRE INDEX PAIR
+   [(_ (~optional label:label) oc:opcode rt:register rt2:register (rn:register #:immediate n) !)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-reg_reg-imm_excla `rt.is32 (list `rt.regnum `rt2.regnum `rn.regnum) (list n) #f))]
+   ; ldp x1 x2 [sp] @16 POST INDEX PAIR
+   [(_ (~optional label:label) oc:opcode rt:register rt2:register (rn:register) #:immediate n)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-reg_reg_imm `rt.is32 (list `rt.regnum `rt2.regnum `rn.regnum) (list n) #f))]
+   ; ldr x0 [x1 x2] register offset, S bit 0
+   [(_ (~optional label:label) oc:opcode rt:register (rn:register rm:register))
+    #:when (not (syntax-e #'rm.is32))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg_reg-reg-shift `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum (register-offset-s-bit 'oc `rt.is32 #f)) '() #f))]
+   ; ldr x0 [x1 x2 LSL @3] register offset, S bit set when the amount is the access size
+   [(_ (~optional label:label) oc:opcode rt:register (rn:register rm:register (~datum LSL) #:immediate s))
+    #:when (not (syntax-e #'rm.is32))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg_reg-reg-shift `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum (register-offset-s-bit 'oc `rt.is32 s)) '() #f))]
+   ; madd x0 x1 x2 x3
+   [(_ (~optional label:label) oc:opcode rt:register rn:register rm:register ra:register)
+    #:when (memq (syntax-e #'oc) '(madd msub))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-reg-reg-reg `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum `ra.regnum) '() #f))]
+   ; mneg x0 x1 x2 is msub x0 x1 x2 xzr
+   [(_ (~optional label:label) (~datum mneg) rt:register rn:register rm:register)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'msub 'reg-reg-reg-reg `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum 31) '() #f))]
+   ; smulh x0 x1 x2 (64-bit only, 32-bit operands fail to match)
+   [(_ (~optional label:label) (~and oc (~or (~datum smulh) (~datum umulh))) rt:register rn:register rm:register)
+    #:when (not (or (syntax-e #'rt.is32) (syntax-e #'rn.is32) (syntax-e #'rm.is32)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-reg-reg #f (list `rt.regnum `rn.regnum `rm.regnum) '() #f))]
+   ; ubfm x0 x1 #immr #imms and sbfm x0 x1 #immr #imms
+   [(_ (~optional label:label) oc:opcode rt:register rn:register #:immediate immr #:immediate imms)
+    #:when (memq (syntax-e #'oc) '(ubfm sbfm))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-reg-imm-imm `rt.is32 (list `rt.regnum `rn.regnum) (list immr imms) #f))]
+   ; uxtb w0 w1 is ubfm w0 w1 #0 #7
+   [(_ (~optional label:label) (~datum uxtb) rt:register rn:register)
+    #:when (and (syntax-e #'rt.is32) (syntax-e #'rn.is32))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'ubfm 'reg-reg-imm-imm #t (list `rt.regnum `rn.regnum) (list 0 7) #f))]
+   ; uxth w0 w1 is ubfm w0 w1 #0 #15
+   [(_ (~optional label:label) (~datum uxth) rt:register rn:register)
+    #:when (and (syntax-e #'rt.is32) (syntax-e #'rn.is32))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'ubfm 'reg-reg-imm-imm #t (list `rt.regnum `rn.regnum) (list 0 15) #f))]
+   ; ubfx x0 x1 #lsb #width is ubfm x0 x1 #lsb #(lsb+width-1)
+   [(_ (~optional label:label) (~datum ubfx) rt:register rn:register #:immediate lsb #:immediate width)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (let ([lsb-val lsb] [width-val width])
+          (write-instruction 'ubfm 'reg-reg-imm-imm `rt.is32 (list `rt.regnum `rn.regnum) (list lsb-val (+ lsb-val width-val -1)) #f)))]
+   ; sbfx x0 x1 #lsb #width is sbfm x0 x1 #lsb #(lsb+width-1)
+   [(_ (~optional label:label) (~datum sbfx) rt:register rn:register #:immediate lsb #:immediate width)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (let ([lsb-val lsb] [width-val width])
+          (write-instruction 'sbfm 'reg-reg-imm-imm `rt.is32 (list `rt.regnum `rn.regnum) (list lsb-val (+ lsb-val width-val -1)) #f)))]
+   ; add x0 x1 x2 LSL @4 (also LSR and ASR)
+   [(_ (~optional label:label) oc:opcode rt:register rn:register rm:register shift:id #:immediate n)
+    #:when (memq (syntax-e #'shift) '(LSL LSR ASR))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-reg-reg-shift `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum (shifted-operand-bits 'shift `rt.is32 n)) '() #f))]
    ; add x1 x2 x4
    [(_ (~optional label:label) oc:opcode rt:register rn:register rm:register)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-reg-reg `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum) '() #f))]
+   ; cset x0 eq is csinc x0 xzr xzr with the inverted condition
+   [(_ (~optional label:label) oc:opcode rt:register cond:condition)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'csinc 'reg-reg-reg-cond `rt.is32 (list `rt.regnum 31 31 (bitwise-xor `cond.condnum 1)) '() #f))]
    ; csel x0 x1 x2 gt
    [(_ (~optional label:label) oc:opcode rt:register rn:register rm:register cond:condition)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-reg-reg-cond `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum `cond.condnum) '() #f))]
+   ; fmov s0 w0
+   [(_ (~optional label:label) (~datum fmov) rd:fpu-register rn:register)
+    #:when (syntax-e #'rn.is32)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'fmov 'fp-gp #f (list `rd.regnum `rn.regnum) '() #f))]
+   ; fmov w0 s0
+   [(_ (~optional label:label) (~datum fmov) rd:register rn:fpu-register)
+    #:when (syntax-e #'rd.is32)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'fmov 'gp-fp #f (list `rd.regnum `rn.regnum) '() #f))]
+   ; fmov s0 @1.5
+   [(_ (~optional label:label) (~datum fmov) rd:fpu-register #:immediate n)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'fmov 'fp-imm #f (list `rd.regnum) (list n) #f))]
+   ; fcmp s0 @0
+   [(_ (~optional label:label) (~datum fcmp) rn:fpu-register #:immediate n)
+    #:when (eqv? (syntax-e #'n) 0)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'fcmp 'fp-zero #f (list `rn.regnum) '() #f))]
    ; scvtf s0 x0
-   ;; [(_ (~optional label:label) oc:opcode rd:fpu-register rn:register)
-   ;;  #'(begin
-   ;;      (~? (try-set-jump-source `label set-jump-source-current))
-   ;;      (write-instruction 'oc 'reg-reg `rd.is32 (list `rd.regnum `rd.ftype `rn.regnum) '() #f))]
+   [(_ (~optional label:label) (~datum scvtf) rd:fpu-register rn:register)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'scvtf 'fp-gp `rn.is32 (list `rd.regnum `rn.regnum) '() #f))]
+   ; fcvtzs w0 s0
+   [(_ (~optional label:label) (~datum fcvtzs) rd:register rn:fpu-register)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'fcvtzs 'gp-fp `rd.is32 (list `rd.regnum `rn.regnum) '() #f))]
+   ; ldr s0 [x1 @8]
+   [(_ (~optional label:label) oc:opcode rt:fpu-register (rn:register #:immediate n))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'fp-reg_reg-imm_ #f (list `rt.regnum `rn.regnum) (list n) #f))]
+   ; ldr s0 [x1]
+   [(_ (~optional label:label) oc:opcode rt:fpu-register (rn:register))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'fp-reg_reg-imm_ #f (list `rt.regnum `rn.regnum) (list 0) #f))]
+   ; fadd s0 s1 s2
+   [(_ (~optional label:label) oc:opcode rd:fpu-register rn:fpu-register rm:fpu-register)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'fp-fp-fp #f (list `rd.regnum `rn.regnum `rm.regnum) '() #f))]
+   ; fabs s0 s1
+   [(_ (~optional label:label) oc:opcode rd:fpu-register rn:fpu-register)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'fp-fp #f (list `rd.regnum `rn.regnum) '() #f))]
    ; eret
    [(_ (~optional label:label) oc:opcode)
     #'(begin
@@ -1326,7 +1705,7 @@
      )]))
   
 (provide (all-defined-out))
-(provide (for-syntax condition immediate system-register opcode register register-32 register-64 label label-targ))
+(provide (for-syntax condition immediate system-register opcode register register-32 register-64 fpu-register label label-targ))
 
 
 ;#xFFFF0000
