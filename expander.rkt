@@ -451,19 +451,31 @@
 
 
 ; the 8 bit immediate of FMOV (scalar, immediate) is abcdefgh, giving
-; (-1)^a * 2^(E-127) * (1 + efgh/16) where E = NOT(b):Replicate(b,5):cd
-(define (fp-imm8-value i)
+; (-1)^a * 2^(E-bias) * (1 + efgh/16), where E = NOT(b):Replicate(b,5):cd (single, bias 127)
+; or NOT(b):Replicate(b,8):cd (double, bias 1023)
+(define (fp-imm8-value i double?)
   (let* ([a (bitwise-bit-field i 7 8)]
          [b (bitwise-bit-field i 6 7)]
          [cd (bitwise-bit-field i 4 6)]
          [efgh (bitwise-bit-field i 0 4)]
-         [e (+ (* (- 1 b) 128) (* b 31 4) cd)])
-    (* (if (= a 1) -1 1) (expt 2 (- e 127)) (/ (+ 16 efgh) 16))))
+         [e (if double?
+                (+ (* (- 1 b) 1024) (* b 255 4) cd)
+                (+ (* (- 1 b) 128) (* b 31 4) cd))]
+         [bias (if double? 1023 127)])
+    (* (if (= a 1) -1 1) (expt 2 (- e bias)) (/ (+ 16 efgh) 16))))
 
-(define (fp-imm8 imm is32?)
+(define (fp-imm8-encode imm double?)
   (let ([target (inexact->exact imm)])
-    (or (for/first ([i (in-range 256)] #:when (= (fp-imm8-value i) target)) i)
-        (error (format "fmov immediate ~a cannot be encoded as a single precision 8 bit float" imm)))))
+    (or (for/first ([i (in-range 256)] #:when (= (fp-imm8-value i double?) target)) i)
+        (error (format "fmov immediate ~a cannot be encoded as a ~a precision 8 bit float"
+                       imm (if double? "double" "single"))))))
+
+(define (fp-imm8 imm is32?) (fp-imm8-encode imm #f))
+(define (fp-imm8-double imm is32?) (fp-imm8-encode imm #t))
+
+; scalar FP syntax modes for double precision (d) registers use a "-d" suffix
+(define (fp-mode mode dbl?)
+  (if dbl? (string->symbol (format "~a-d" mode)) mode))
 
 ; returns the 13 bit N:immr:imms field for a bitmask immediate (and/orr/eor/ands)
 ; a value is encodable when it is a rotated run of ones repeated across the register
@@ -772,6 +784,35 @@
     ['str    'fp-reg_reg-imm_ 'imm12-rn-rd    #xBD000000 #f shift-2]
     ['ldr    'fp-reg_reg-reg-shift 'rm-option-s-rn-rd #xBC606800 #f #f]
     ['str    'fp-reg_reg-reg-shift 'rm-option-s-rn-rd #xBC206800 #f #f]
+    ; double precision (d) variants of the scalar FP rows
+    ['fabs   'fp-fp-d        'rn-rd           #x1E60C000 #f #f]
+    ['fadd   'fp-fp-fp-d     'rm-rn-rd        #x1E602800 #f #f]
+    ['fcmp   'fp-fp-d        'rm-rn           #x1E602000 #f #f]
+    ['fcmp   'fp-zero-d      'rn              #x1E602008 #f #f]
+    ['fcvtzs 'gp-fp-d        'rn-rd           #x9E780000 b31 #f]
+    ['fcvtzu 'gp-fp-d        'rn-rd           #x9E790000 b31 #f]
+    ['fdiv   'fp-fp-fp-d     'rm-rn-rd        #x1E601800 #f #f]
+    ['fmov   'fp-gp-d        'rn-rd           #x9E670000 b31 #f]
+    ['fmov   'gp-fp-d        'rn-rd           #x9E660000 b31 #f]
+    ['fmov   'fp-fp-d        'rn-rd           #x1E604000 #f #f]
+    ['fmov   'fp-imm-d       'rd-imm8         #x1E601000 #f fp-imm8-double]
+    ['fmul   'fp-fp-fp-d     'rm-rn-rd        #x1E600800 #f #f]
+    ['fneg   'fp-fp-d        'rn-rd           #x1E614000 #f #f]
+    ['fsqrt  'fp-fp-d        'rn-rd           #x1E61C000 #f #f]
+    ['fsub   'fp-fp-fp-d     'rm-rn-rd        #x1E603800 #f #f]
+    ['fmax   'fp-fp-fp-d     'rm-rn-rd        #x1E604800 #f #f]
+    ['fmin   'fp-fp-fp-d     'rm-rn-rd        #x1E605800 #f #f]
+    ['fcsel  'fp-fp-fp-cond-d 'rm-cond-rn-rd  #x1E600C00 #f #f]
+    ['fmadd  'fp-fp-fp-fp-d  'rm-ra-rn-rd     #x1F400000 #f #f]
+    ['fmsub  'fp-fp-fp-fp-d  'rm-ra-rn-rd     #x1F408000 #f #f]
+    ['fnmadd 'fp-fp-fp-fp-d  'rm-ra-rn-rd     #x1F600000 #f #f]
+    ['fnmsub 'fp-fp-fp-fp-d  'rm-ra-rn-rd     #x1F608000 #f #f]
+    ['scvtf  'fp-gp-d        'rn-rd           #x9E620000 b31 #f]
+    ['ucvtf  'fp-gp-d        'rn-rd           #x9E630000 b31 #f]
+    ['ldr    'fp-reg_reg-imm_-d 'imm12-rn-rd  #xFD400000 #f shift-3]
+    ['str    'fp-reg_reg-imm_-d 'imm12-rn-rd  #xFD000000 #f shift-3]
+    ['ldr    'fp-reg_reg-reg-shift-d 'rm-option-s-rn-rd #xFC606800 #f #f]
+    ['str    'fp-reg_reg-reg-shift-d 'rm-option-s-rn-rd #xFC206800 #f #f]
 
     ['udiv 'reg-reg-reg  'rm-rn-rd                           #b10011010110000000000100000000000 b31 #f]
 
@@ -1199,7 +1240,7 @@
              #:with regnum num
              #:with is32 isW))
   (define-syntax-class fpu-register
-    #:description "single precision fpu register"
+    #:description "single or double precision fpu register"
     (pattern x:id
              #:do [; here we expand the identifier so this class works with
                    ; rename-transformer allowing the user to rename registers
@@ -1207,10 +1248,13 @@
                    (define str (symbol->string (syntax-e  actual)))
                    (define isS (or (eq? (string-ref str 0) #\S)
                                    (eq? (string-ref str 0) #\s)))
+                   (define isD (or (eq? (string-ref str 0) #\D)
+                                   (eq? (string-ref str 0) #\d)))
                    (define num
-                     (and isS (string->number (substring str 1))))]
+                     (and (or isS isD) (string->number (substring str 1))))]
              #:when (and (exact-nonnegative-integer? num) (<= num 31))
-             #:with regnum num))
+             #:with regnum num
+             #:with dbl isD))
   (define-syntax-class register-32
     (pattern x:register
              #:when (syntax-e #'x.is32)))
@@ -1229,7 +1273,31 @@
       umull umulh uxtb uxth wfe wfi fabs fadd fcmp fcvtzs fdiv fmov fmul fneg
       fsqrt fsub fcvtzu fmax fmin fmadd fmsub fnmadd fnmsub ucvtf fcsel)))
 
+;; source position of each assembled line: (offset file line col), newest first
+(define source-records '())
+(define (reset-source-records!) (set! source-records '()))
+(define (note-source! file line col offset)
+  (set! source-records (cons (list offset file line col) source-records)))
+
+(begin-for-syntax
+  (define (first-srcloc x)
+    (cond
+      [(and (syntax? x) (syntax-line x)) x]
+      [(syntax? x) (first-srcloc (syntax-e x))]
+      [(pair? x) (or (first-srcloc (car x)) (first-srcloc (cdr x)))]
+      [else #f])))
+
 (define-syntax (arm-line stx)
+  (define loc (first-srcloc (cdr (syntax-e stx))))
+  (with-syntax ([args (datum->syntax stx (cdr (syntax-e stx)))]
+                [file (if loc (format "~a" (syntax-source loc)) "")]
+                [line (if loc (syntax-line loc) 0)]
+                [col (if loc (syntax-column loc) 0)])
+    #'(begin
+        (note-source! file line col (context-location prog))
+        (arm-line-forms . args))))
+
+(define-syntax (arm-line-forms stx)
 ;  (writeln stx)
   (syntax-parse stx #:datum-literals (= ! LSL )
    ; nop
@@ -1563,91 +1631,113 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-reg-reg-cond `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum `cond.condnum) '() #f))]
-   ; fmov s0 w0
+   ; fmov s0 w0 (or d0 x0 for double precision)
    [(_ (~optional label:label) (~datum fmov) rd:fpu-register rn:register)
-    #:when (syntax-e #'rn.is32)
+    #:when (eq? (syntax-e #'rn.is32) (not (syntax-e #'rd.dbl)))
+    #:with fpmode (if (syntax-e #'rd.dbl) #'fp-gp-d #'fp-gp)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'fmov 'fp-gp #f (list `rd.regnum `rn.regnum) '() #f))]
-   ; fmov w0 s0
+        (write-instruction 'fmov 'fpmode #f (list `rd.regnum `rn.regnum) '() #f))]
+   ; fmov w0 s0 (or x0 d0 for double precision)
    [(_ (~optional label:label) (~datum fmov) rd:register rn:fpu-register)
-    #:when (syntax-e #'rd.is32)
+    #:when (eq? (syntax-e #'rd.is32) (not (syntax-e #'rn.dbl)))
+    #:with fpmode (if (syntax-e #'rn.dbl) #'gp-fp-d #'gp-fp)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'fmov 'gp-fp #f (list `rd.regnum `rn.regnum) '() #f))]
-   ; fmov s0 @1.5
+        (write-instruction 'fmov 'fpmode #f (list `rd.regnum `rn.regnum) '() #f))]
+   ; fmov s0 @1.5 (or d0 @1.5 for double precision)
    [(_ (~optional label:label) (~datum fmov) rd:fpu-register #:immediate n)
+    #:with fpmode (if (syntax-e #'rd.dbl) #'fp-imm-d #'fp-imm)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'fmov 'fp-imm #f (list `rd.regnum) (list n) #f))]
-   ; fcmp s0 @0
+        (write-instruction 'fmov 'fpmode #f (list `rd.regnum) (list n) #f))]
+   ; fcmp s0 @0 (or d0 @0 for double precision)
    [(_ (~optional label:label) (~datum fcmp) rn:fpu-register #:immediate n)
     #:when (eqv? (syntax-e #'n) 0)
+    #:with fpmode (if (syntax-e #'rn.dbl) #'fp-zero-d #'fp-zero)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'fcmp 'fp-zero #f (list `rn.regnum) '() #f))]
-   ; scvtf s0 x0
+        (write-instruction 'fcmp 'fpmode #f (list `rn.regnum) '() #f))]
+   ; scvtf s0 x0 (any integer width is accepted as the source)
    [(_ (~optional label:label) (~datum scvtf) rd:fpu-register rn:register)
+    #:with fpmode (if (syntax-e #'rd.dbl) #'fp-gp-d #'fp-gp)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'scvtf 'fp-gp `rn.is32 (list `rd.regnum `rn.regnum) '() #f))]
-   ; ucvtf s0 w1
+        (write-instruction 'scvtf 'fpmode `rn.is32 (list `rd.regnum `rn.regnum) '() #f))]
+   ; ucvtf s0 w1 (any integer width is accepted as the source)
    [(_ (~optional label:label) (~datum ucvtf) rd:fpu-register rn:register)
+    #:with fpmode (if (syntax-e #'rd.dbl) #'fp-gp-d #'fp-gp)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'ucvtf 'fp-gp `rn.is32 (list `rd.regnum `rn.regnum) '() #f))]
-   ; fcvtzs w0 s0
+        (write-instruction 'ucvtf 'fpmode `rn.is32 (list `rd.regnum `rn.regnum) '() #f))]
+   ; fcvtzs w0 s0 (any integer width is accepted as the destination)
    [(_ (~optional label:label) (~datum fcvtzs) rd:register rn:fpu-register)
+    #:with fpmode (if (syntax-e #'rn.dbl) #'gp-fp-d #'gp-fp)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'fcvtzs 'gp-fp `rd.is32 (list `rd.regnum `rn.regnum) '() #f))]
-   ; fcvtzu w0 s0
+        (write-instruction 'fcvtzs 'fpmode `rd.is32 (list `rd.regnum `rn.regnum) '() #f))]
+   ; fcvtzu w0 s0 (any integer width is accepted as the destination)
    [(_ (~optional label:label) (~datum fcvtzu) rd:register rn:fpu-register)
+    #:with fpmode (if (syntax-e #'rn.dbl) #'gp-fp-d #'gp-fp)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'fcvtzu 'gp-fp `rd.is32 (list `rd.regnum `rn.regnum) '() #f))]
-   ; ldr s0 [x1 @8]
+        (write-instruction 'fcvtzu 'fpmode `rd.is32 (list `rd.regnum `rn.regnum) '() #f))]
+   ; ldr s0 [x1 @8] (or ldr d0 [x1 @8])
    [(_ (~optional label:label) oc:opcode rt:fpu-register (rn:register #:immediate n))
+    #:with fpmode (if (syntax-e #'rt.dbl) #'fp-reg_reg-imm_-d #'fp-reg_reg-imm_)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'oc 'fp-reg_reg-imm_ #f (list `rt.regnum `rn.regnum) (list n) #f))]
+        (write-instruction 'oc 'fpmode #f (list `rt.regnum `rn.regnum) (list n) #f))]
    ; ldr s0 [x1]
    [(_ (~optional label:label) oc:opcode rt:fpu-register (rn:register))
+    #:with fpmode (if (syntax-e #'rt.dbl) #'fp-reg_reg-imm_-d #'fp-reg_reg-imm_)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'oc 'fp-reg_reg-imm_ #f (list `rt.regnum `rn.regnum) (list 0) #f))]
+        (write-instruction 'oc 'fpmode #f (list `rt.regnum `rn.regnum) (list 0) #f))]
    ; ldr s0 [x1 x2] and ldr s0 [x1 x2 LSL @2]: register offset, Rm must be an x register
    [(_ (~optional label:label) oc:opcode rt:fpu-register (rn:register rm:register))
     #:when (and (memq (syntax-e #'oc) '(ldr str)) (not (syntax-e #'rm.is32)))
+    #:with fpmode (if (syntax-e #'rt.dbl) #'fp-reg_reg-reg-shift-d #'fp-reg_reg-reg-shift)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'oc 'fp-reg_reg-reg-shift #f (list `rt.regnum `rn.regnum `rm.regnum (register-offset-s-bit 'oc #t #f)) '() #f))]
+        (write-instruction 'oc 'fpmode #f (list `rt.regnum `rn.regnum `rm.regnum (register-offset-s-bit 'oc (not `rt.dbl) #f)) '() #f))]
    [(_ (~optional label:label) oc:opcode rt:fpu-register (rn:register rm:register (~datum LSL) #:immediate s))
     #:when (and (memq (syntax-e #'oc) '(ldr str)) (not (syntax-e #'rm.is32)))
+    #:with fpmode (if (syntax-e #'rt.dbl) #'fp-reg_reg-reg-shift-d #'fp-reg_reg-reg-shift)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'oc 'fp-reg_reg-reg-shift #f (list `rt.regnum `rn.regnum `rm.regnum (register-offset-s-bit 'oc #t s)) '() #f))]
-   ; fadd s0 s1 s2
+        (write-instruction 'oc 'fpmode #f (list `rt.regnum `rn.regnum `rm.regnum (register-offset-s-bit 'oc (not `rt.dbl) s)) '() #f))]
+   ; fadd s0 s1 s2 (or fadd d0 d1 d2): all three operands must have the same width
    [(_ (~optional label:label) oc:opcode rd:fpu-register rn:fpu-register rm:fpu-register)
+    #:when (and (eq? (syntax-e #'rd.dbl) (syntax-e #'rn.dbl)) (eq? (syntax-e #'rn.dbl) (syntax-e #'rm.dbl)))
+    #:with fpmode (if (syntax-e #'rd.dbl) #'fp-fp-fp-d #'fp-fp-fp)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'oc 'fp-fp-fp #f (list `rd.regnum `rn.regnum `rm.regnum) '() #f))]
-   ; fcsel s0 s1 s2 eq
+        (write-instruction 'oc 'fpmode #f (list `rd.regnum `rn.regnum `rm.regnum) '() #f))]
+   ; fcsel s0 s1 s2 eq (or fcsel d0 d1 d2 eq)
    [(_ (~optional label:label) (~datum fcsel) rd:fpu-register rn:fpu-register rm:fpu-register cond:condition)
+    #:when (and (eq? (syntax-e #'rd.dbl) (syntax-e #'rn.dbl)) (eq? (syntax-e #'rn.dbl) (syntax-e #'rm.dbl)))
+    #:with fpmode (if (syntax-e #'rd.dbl) #'fp-fp-fp-cond-d #'fp-fp-fp-cond)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'fcsel 'fp-fp-fp-cond #f (list `rd.regnum `rn.regnum `rm.regnum `cond.condnum) '() #f))]
+        (write-instruction 'fcsel 'fpmode #f (list `rd.regnum `rn.regnum `rm.regnum `cond.condnum) '() #f))]
    ; fmadd s0 s1 s2 s3 (fmsub, fnmadd and fnmsub take the same operands)
    [(_ (~optional label:label) oc:opcode rd:fpu-register rn:fpu-register rm:fpu-register ra:fpu-register)
-    #:when (memq (syntax-e #'oc) '(fmadd fmsub fnmadd fnmsub))
+    #:when (and (memq (syntax-e #'oc) '(fmadd fmsub fnmadd fnmsub))
+                (eq? (syntax-e #'rd.dbl) (syntax-e #'rn.dbl))
+                (eq? (syntax-e #'rn.dbl) (syntax-e #'rm.dbl))
+                (eq? (syntax-e #'rm.dbl) (syntax-e #'ra.dbl)))
+    #:with fpmode (if (syntax-e #'rd.dbl) #'fp-fp-fp-fp-d #'fp-fp-fp-fp)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'oc 'fp-fp-fp-fp #f (list `rd.regnum `rn.regnum `rm.regnum `ra.regnum) '() #f))]
-   ; fabs s0 s1
+        (write-instruction 'oc 'fpmode #f (list `rd.regnum `rn.regnum `rm.regnum `ra.regnum) '() #f))]
+   ; fabs s0 s1 (or fabs d0 d1)
    [(_ (~optional label:label) oc:opcode rd:fpu-register rn:fpu-register)
+    #:when (eq? (syntax-e #'rd.dbl) (syntax-e #'rn.dbl))
+    #:with fpmode (if (syntax-e #'rd.dbl) #'fp-fp-d #'fp-fp)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
-        (write-instruction 'oc 'fp-fp #f (list `rd.regnum `rn.regnum) '() #f))]
+        (write-instruction 'oc 'fpmode #f (list `rd.regnum `rn.regnum) '() #f))]
    ; eret
    [(_ (~optional label:label) oc:opcode)
     #'(begin
@@ -1718,6 +1808,7 @@
   (set-context-maxl! prog 0)
   (set-context-jump-table! prog (make-hash))
   (set-context-branches-waiting! prog (make-hash))
+  (reset-source-records!)
   )
 ;; global labels named :Bp-... (from the (breakpoint) macro) become gdb breakpoints.
 ;; $image_base is the QEMU -kernel load address; edit it in the file for other layouts.
@@ -1727,6 +1818,8 @@
     (λ (out)
       (fprintf out "# breakpoints for ~a, load with: source ~a\n" image-filename gdb-filename)
       (fprintf out "set $image_base = 0x80000\n")
+      (for ([r (reverse source-records)])   ; SPIKE: temporary dump
+        (printf "SRC ~x ~a:~a:~a\n" (car r) (cadr r) (caddr r) (cadddr r)))
       (for ([entry (obj-file-symbol-table current-obj)])
         (let ([name (hash-ref (obj-file-string-table current-obj) (car entry))])
           (when (string-prefix? name ":Bp-")
