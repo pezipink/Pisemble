@@ -1,0 +1,77 @@
+{
+  "name": "Pisemble opcodes",
+  "scopeName": "source.racket.pisemble-opcodes",
+  "injectionSelector": "L:source.racket -comment -string",
+  "patterns": [
+    {
+      "include": "#string-double"
+    },
+    {
+      "include": "#comment-line"
+    },
+    {
+      "include": "#arm-block"
+    },
+    {
+      "include": "#label-definition"
+    },
+    {
+      "include": "#label-reference"
+    },
+    {
+      "include": "#alignment"
+    }
+  ],
+  "repository": {
+    "arm-block": {
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [
+        {
+          "include": "#arm-block"
+        },
+        {
+          "include": "#opcode"
+        },
+        {
+          "include": "#label-reference"
+        },
+        {
+          "include": "source.racket"
+        }
+      ]
+    },
+    "opcode": {
+      "match": "(?<=^|[\\s{(\\[])(?:b\\.(?:eq|ne|cs|cc|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)|add|adds|adr|and|asr|b|bl|blr|br|brk|cbz|cbnz|clz|cmn|cmp|csel|csinc|cset|dmb|dsb|eor|eret|hlt|hvc|isb|ldp|ldr|ldrh|ldrb|ldur|ldurb|ldurh|lsl|lsr|mov|movk|movn|movz|mrs|msr|mul|neg|nop|orr|rbit|rev16|ret|scvtf|sdiv|sev|smc|stp|str|strb|strh|stur|sub|subs|svc|sxtb|sxth|sxtw|tst|udiv|wfe|wfi|fabs|fadd|fcmp|fcvtzs|fdiv|fmov|fmul|fneg|fsqrt|fsub)(?=$|[\\s})\\]])",
+      "name": "keyword.other.opcode.pisemble"
+    },
+    "label-definition": {
+      "match": "(?<=^|[\\s(\\[{]):[A-Za-z_][\\w!?.\\-]*(?=$|[\\s()\\[\\]{}])",
+      "name": "entity.name.label.definition.pisemble"
+    },
+    "label-reference": {
+      "match": "(?<=^|[\\s(\\[{])[A-Za-z_][\\w!?.\\-]*(?:[:+]|-)(?=$|[\\s()\\[\\]{}])",
+      "name": "entity.name.label.reference.pisemble"
+    },
+    "alignment": {
+      "match": "(?<=^|[\\s(\\[{])/=(?=$|[\\s()\\[\\]{}])",
+      "name": "keyword.operator.alignment.pisemble"
+    },
+    "string-double": {
+      "begin": "\"",
+      "end": "\"",
+      "name": "string.quoted.double.racket",
+      "patterns": [
+        {
+          "match": "\\\\.",
+          "name": "constant.character.escape.racket"
+        }
+      ]
+    },
+    "comment-line": {
+      "begin": ";",
+      "end": "$",
+      "name": "comment.line.semicolon.racket"
+    }
+  }
+}
