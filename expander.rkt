@@ -12,7 +12,7 @@
 
 (require syntax/parse/define)
 
-(require "objfile.rkt")
+(require "objfile.rkt" "dwarf.rkt")
 (define is-debug #f)
 
 (define-syntax (wdb stx)  
@@ -431,6 +431,36 @@
         (bitwise-ior-n (arithmetic-shift imm8 13) bin)])
      ]
 
+    ['vec-rm-rn-rd-q-size
+     (match-lambda
+       [(list bin rd rn rm q size)
+        (bitwise-ior-n bin rd (arithmetic-shift rn 5) (arithmetic-shift rm 16) (arithmetic-shift q 30) (arithmetic-shift size 22))])
+     (match-lambda
+       [(list bin) bin])
+     ]
+    ['vec-rn-rd-q-imm5
+     (match-lambda
+       [(list bin rd rn q imm5)
+        (bitwise-ior-n bin rd (arithmetic-shift rn 5) (arithmetic-shift q 30) (arithmetic-shift imm5 16))])
+     (match-lambda
+       [(list bin) bin])
+     ]
+    ['vec-rd-q-imm8
+     (match-lambda
+       [(list bin rd q)
+        (bitwise-ior-n bin rd (arithmetic-shift q 30))])
+     (match-lambda
+       [(list bin imm8)
+        (bitwise-ior-n bin (arithmetic-shift (arithmetic-shift imm8 -5) 16) (arithmetic-shift (bitwise-and imm8 31) 5))])
+     ]
+    ['vec-rt-rn-q-size
+     (match-lambda
+       [(list bin rt rn q size)
+        (bitwise-ior-n bin rt (arithmetic-shift rn 5) (arithmetic-shift q 30) (arithmetic-shift size 10))])
+     (match-lambda
+       [(list bin) bin])
+     ]
+
     ['none
      (match-lambda
        [(list bin) bin])
@@ -469,6 +499,23 @@
     (or (for/first ([i (in-range 256)] #:when (= (fp-imm8-value i double?) target)) i)
         (error (format "fmov immediate ~a cannot be encoded as a ~a precision 8 bit float"
                        imm (if double? "double" "single"))))))
+
+; movi 8 bit vector immediate: a single byte
+(define (movi-byte-imm8 imm is32?)
+  (unless (and (exact-integer? imm) (<= 0 imm 255))
+    (error (format "movi immediate must be between 0 and 255, not ~a" imm)))
+  imm)
+
+; movi 64 bit vector immediate: each byte must be 00 or FF, and imm8 has one bit per byte
+(define (movi-d-imm8 imm is32?)
+  (unless (and (exact-integer? imm) (<= 0 imm (sub1 (expt 2 64))))
+    (error (format "movi 2d immediate must be between 0 and #xFFFFFFFFFFFFFFFF, not ~a" imm)))
+  (for/fold ([acc 0]) ([i (in-range 8)])
+    (define byte (bitwise-bit-field imm (* 8 i) (* 8 (add1 i))))
+    (cond
+      [(= byte #xFF) (bitwise-ior acc (arithmetic-shift 1 i))]
+      [(= byte 0) acc]
+      [else (error (format "movi 2d immediate ~x: each byte must be 00 or FF" imm))])))
 
 (define (fp-imm8 imm is32?) (fp-imm8-encode imm #f))
 (define (fp-imm8-double imm is32?) (fp-imm8-encode imm #t))
@@ -532,6 +579,14 @@
     [(eqv? amount log2-size) 1]
     [else (error (format "~a register offset shift must be 0 or ~a, not ~a" oc log2-size amount))]))
 
+; S bit of a 128 bit register offset access: LSL #0 or LSL #4
+(define (q-offset-s-bit amount)
+  (cond
+    [(not amount) 0]
+    [(eqv? amount 0) 0]
+    [(eqv? amount 4) 1]
+    [else (error (format "q register offset shift must be 0 or 4, not ~a" amount))]))
+
 ; shift type (bits 23:22) and amount (bits 15:10) of a shifted register operand
 (define (shifted-operand-bits kind is32? amount)
   (define type (case kind [(LSL) 0] [(LSR) 1] [(ASR) 2] [(ROR) 3]))
@@ -583,6 +638,10 @@
                    (if (eq? 0 (bitwise-and #b111 imm))
                        (arithmetic-shift imm -3)
                        (error "not divisible by 8")))]
+        [shift-4 (λ (imm is32?)
+                   (if (eq? 0 (bitwise-and #b1111 imm))
+                       (arithmetic-shift imm -4)
+                       (error "not divisible by 16")))]
         [shift-2 (λ (imm is32?)
                    (if (eq? 0 (bitwise-and #b11 imm))
                        (arithmetic-shift imm -2)
@@ -813,6 +872,21 @@
     ['str    'fp-reg_reg-imm_-d 'imm12-rn-rd  #xFD000000 #f shift-3]
     ['ldr    'fp-reg_reg-reg-shift-d 'rm-option-s-rn-rd #xFC606800 #f #f]
     ['str    'fp-reg_reg-reg-shift-d 'rm-option-s-rn-rd #xFC206800 #f #f]
+
+    ['ldr    'q-reg_reg-imm_        'imm12-rn-rd              #x3DC00000 #f shift-4]
+    ['str    'q-reg_reg-imm_        'imm12-rn-rd              #x3D800000 #f shift-4]
+    ['ldr    'q-reg_reg-reg-shift   'rm-option-s-rn-rd        #x3CE06800 #f #f]
+    ['str    'q-reg_reg-reg-shift   'rm-option-s-rn-rd        #x3CA06800 #f #f]
+    ['add    'vec-reg-reg-reg       'vec-rm-rn-rd-q-size      #x0E208400 #f #f]
+    ['sub    'vec-reg-reg-reg       'vec-rm-rn-rd-q-size      #x2E208400 #f #f]
+    ['fadd   'vec-reg-reg-reg-fp    'vec-rm-rn-rd-q-size      #x0E20D400 #f #f]
+    ['fmul   'vec-reg-reg-reg-fp    'vec-rm-rn-rd-q-size      #x2E20DC00 #f #f]
+    ['mov    'vec-reg-reg           'vec-rm-rn-rd-q-size      #x0EA01C00 #f #f]
+    ['dup    'vec-reg-gp            'vec-rn-rd-q-imm5         #x0E000C00 #f #f]
+    ['movi   'vec-reg-imm8          'vec-rd-q-imm8            #x0F00E400 #f movi-byte-imm8]
+    ['movi   'vec-reg-imm8-d        'vec-rd-q-imm8            #x2F00E400 #f movi-d-imm8]
+    ['ld1    'vec-reg-addr          'vec-rt-rn-q-size         #x0C407000 #f #f]
+    ['st1    'vec-reg-addr          'vec-rt-rn-q-size         #x0C007000 #f #f]
 
     ['udiv 'reg-reg-reg  'rm-rn-rd                           #b10011010110000000000100000000000 b31 #f]
 
@@ -1212,7 +1286,7 @@
                            'fabs 'fadd 'fcmp 'fcvtzs 'fcvtzu 'fdiv 'fmov 'fmul 'fneg 'fsqrt 'fsub 'fmax 'fmin 'fmadd 'fmsub 'fnmadd 'fnmsub 'ucvtf 'fcsel
                            'adds 'subs 'cmn 'tst 'ands 'sdiv 'movn 'csinc 'cset 'br 'blr 'clz 'rbit 'rev16
                            'ldur 'ldurb 'ldurh 'svc 'hvc 'smc 'brk 'hlt 'dmb 'dsb 'isb 'wfi 'sev
-                           'madd 'msub 'ror 'ubfm 'sbfm 'ldrsw 'ldrsb 'ldrsh 'csinv 'csneg 'bic 'bics 'orn 'adc 'sbc))]
+                           'madd 'msub 'ror 'ubfm 'sbfm 'ldrsw 'ldrsb 'ldrsh 'csinv 'csneg 'bic 'bics 'orn 'adc 'sbc 'dup 'movi 'ld1 'st1))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
     #:description "register"
@@ -1255,6 +1329,26 @@
              #:when (and (exact-nonnegative-integer? num) (<= num 31))
              #:with regnum num
              #:with dbl isD))
+  ; vector register with arrangement, e.g. v0.4s. The name is read directly rather
+  ; than local-expanded, because v0.4s is not a bound identifier.
+  (define-syntax-class vec-register
+    #:description "vector register with arrangement (e.g. v0.4s)"
+    (pattern x:id
+             #:do [(define m (regexp-match #px"^v([0-9]+)[.](8b|16b|4h|8h|2s|4s|2d)$"
+                                           (string-downcase (symbol->string (syntax-e #'x)))))]
+             #:when (and m (<= (string->number (cadr m)) 31))
+             #:with regnum (string->number (cadr m))
+             #:with arr (string->symbol (caddr m))
+             #:with esize (case (string-ref (caddr m) (sub1 (string-length (caddr m))))
+                            [(#\b) 0] [(#\h) 1] [(#\s) 2] [else 3])
+             #:with q (if (member (caddr m) '("16b" "8h" "4s" "2d")) 1 0)))
+  (define-syntax-class q-register
+    #:description "128 bit simd register (e.g. q0)"
+    (pattern x:id
+             #:do [(define m (regexp-match #px"^q([0-9]+)$"
+                                           (string-downcase (symbol->string (syntax-e #'x)))))]
+             #:when (and m (<= (string->number (cadr m)) 31))
+             #:with regnum (string->number (cadr m))))
   (define-syntax-class register-32
     (pattern x:register
              #:when (syntax-e #'x.is32)))
@@ -1271,13 +1365,49 @@
       rbit rev16 rev32 ret ror sbc sbfm sbfx scvtf sdiv sev smc smull smulh stlr stlxr
       stp str strb strh stur stxr sub subs svc sxtb sxth sxtw tbnz tbz tst ubfm ubfx udiv
       umull umulh uxtb uxth wfe wfi fabs fadd fcmp fcvtzs fdiv fmov fmul fneg
-      fsqrt fsub fcvtzu fmax fmin fmadd fmsub fnmadd fnmsub ucvtf fcsel)))
+      fsqrt fsub fcvtzu fmax fmin fmadd fmsub fnmadd fnmsub ucvtf fcsel dup movi ld1 st1)))
 
 ;; source position of each assembled line: (offset file line col), newest first
 (define source-records '())
-(define (reset-source-records!) (set! source-records '()))
+;; function entries from subr: (offset . name), newest first
+(define func-records '())
+(define (reset-source-records!)
+  (set! source-records '())
+  (set! func-records '()))
 (define (note-source! file line col offset)
   (set! source-records (cons (list offset file line col) source-records)))
+(define (note-func! label)
+  (define name (symbol->string label))
+  (set! func-records (cons (cons (context-location prog) (substring name 1)) func-records)))
+
+;; records of each object written in this run, keyed by file name. aarch64 resets
+;; source-records for every pass, so the image pass uses this store to relocate
+;; the records of the objects it links.
+(define obj-source-store (make-hash))
+(define (symbol-offsets obj)
+  (for/list ([entry (obj-file-symbol-table obj)])
+    (cons (hash-ref (obj-file-string-table obj) (car entry)) (cdr entry))))
+(define (store-obj-source! filename)
+  (hash-set! obj-source-store filename
+             (list (symbol-offsets current-obj) source-records func-records)))
+(define (relocate-linked-source! link-names)
+  (define merged (symbol-offsets current-obj))
+  (for ([fn link-names])
+    (define stored (hash-ref obj-source-store fn #f))
+    (when stored
+      ; a global symbol present in both gives the object's base in the image
+      (define base
+        (for/first ([sym (car stored)] #:when (assoc (car sym) merged))
+          (- (cdr (assoc (car sym) merged)) (cdr sym))))
+      (when base
+        (set! source-records
+              (append (for/list ([r (cadr stored)])
+                        (cons (+ base (car r)) (cdr r)))
+                      source-records))
+        (set! func-records
+              (append (for/list ([f (caddr stored)])
+                        (cons (+ base (car f)) (cdr f)))
+                      func-records))))))
 
 (begin-for-syntax
   (define (first-srcloc x)
@@ -1285,10 +1415,30 @@
       [(and (syntax? x) (syntax-line x)) x]
       [(syntax? x) (first-srcloc (syntax-e x))]
       [(pair? x) (or (first-srcloc (car x)) (first-srcloc (cdr x)))]
-      [else #f])))
+      [else #f]))
+  ;; macro-generated lines point at the line that invoked the macro. origin
+  ;; identifiers are searched through the subterms; the last one with a line is the outermost use
+  (define (origin-loc x)
+    (cond
+      [(syntax? x)
+       (define ids (filter syntax-line (flatten-origin (syntax-property x 'origin))))
+       (if (pair? ids) (list-ref ids (sub1 (length ids))) (origin-loc (syntax-e x)))]
+      [(pair? x) (or (origin-loc (car x)) (origin-loc (cdr x)))]
+      [else #f]))
+  (define (flatten-origin o)
+    (cond [(syntax? o) (list o)]
+          [(pair? o) (append (flatten-origin (car o)) (flatten-origin (cdr o)))]
+          [else '()]))
+  ;; the own line is kept when written in the same file as its use site (e.g. inside a subr body)
+  (define (line-loc x use)
+    (define own (first-srcloc x))
+    (define u (if (syntax? use) use (origin-loc x)))
+    (cond
+      [(and own u (not (equal? (format "~a" (syntax-source own)) (format "~a" (syntax-source u))))) u]
+      [else (or own u)])))
 
 (define-syntax (arm-line stx)
-  (define loc (first-srcloc (cdr (syntax-e stx))))
+  (define loc (line-loc (cdr (syntax-e stx)) (or (syntax-property stx 'use-site) (origin-loc stx))))
   (with-syntax ([args (datum->syntax stx (cdr (syntax-e stx)))]
                 [file (if loc (format "~a" (syntax-source loc)) "")]
                 [line (if loc (syntax-line loc) 0)]
@@ -1300,6 +1450,77 @@
 (define-syntax (arm-line-forms stx)
 ;  (writeln stx)
   (syntax-parse stx #:datum-literals (= ! LSL )
+   ; ldr q0 [x1 @16] and ldr q0 [x1] (str likewise): unsigned offset, a multiple of 16
+   [(_ (~optional label:label) oc:opcode rt:q-register (rn:register #:immediate n))
+    #:when (and (memq (syntax-e #'oc) '(ldr str)) (not (syntax-e #'rn.is32)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'q-reg_reg-imm_ #f (list `rt.regnum `rn.regnum) (list n) #f))]
+   [(_ (~optional label:label) oc:opcode rt:q-register (rn:register))
+    #:when (and (memq (syntax-e #'oc) '(ldr str)) (not (syntax-e #'rn.is32)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'q-reg_reg-imm_ #f (list `rt.regnum `rn.regnum) (list 0) #f))]
+   ; ldr q0 [x1 x2] and ldr q0 [x1 x2 LSL @4] (str likewise): Rm must be an x register
+   [(_ (~optional label:label) oc:opcode rt:q-register (rn:register rm:register))
+    #:when (and (memq (syntax-e #'oc) '(ldr str)) (not (syntax-e #'rn.is32)) (not (syntax-e #'rm.is32)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'q-reg_reg-reg-shift #f (list `rt.regnum `rn.regnum `rm.regnum (q-offset-s-bit #f)) '() #f))]
+   [(_ (~optional label:label) oc:opcode rt:q-register (rn:register rm:register (~datum LSL) #:immediate s))
+    #:when (and (memq (syntax-e #'oc) '(ldr str)) (not (syntax-e #'rn.is32)) (not (syntax-e #'rm.is32)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'q-reg_reg-reg-shift #f (list `rt.regnum `rn.regnum `rm.regnum (q-offset-s-bit s)) '() #f))]
+   ; add v0.4s v1.4s v2.4s (sub likewise): all three operands share an arrangement
+   [(_ (~optional label:label) oc:opcode rd:vec-register rn:vec-register rm:vec-register)
+    #:when (and (memq (syntax-e #'oc) '(add sub))
+                (eq? (syntax-e #'rd.arr) (syntax-e #'rn.arr))
+                (eq? (syntax-e #'rn.arr) (syntax-e #'rm.arr)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'vec-reg-reg-reg #f (list `rd.regnum `rn.regnum `rm.regnum `rd.q `rd.esize) '() #f))]
+   ; fadd v0.2s v1.2s v2.2s (fmul likewise): arrangements 2s, 4s and 2d only
+   [(_ (~optional label:label) oc:opcode rd:vec-register rn:vec-register rm:vec-register)
+    #:when (and (memq (syntax-e #'oc) '(fadd fmul))
+                (memq (syntax-e #'rd.arr) '(2s 4s 2d))
+                (eq? (syntax-e #'rd.arr) (syntax-e #'rn.arr))
+                (eq? (syntax-e #'rn.arr) (syntax-e #'rm.arr)))
+    #:with sz (if (eq? (syntax-e #'rd.arr) '2d) 1 0)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'vec-reg-reg-reg-fp #f (list `rd.regnum `rn.regnum `rm.regnum `rd.q `sz) '() #f))]
+   ; mov v0.16b v1.16b (an alias of orr, with the source register as both operands)
+   [(_ (~optional label:label) (~datum mov) rd:vec-register rn:vec-register)
+    #:when (eq? (syntax-e #'rd.arr) (syntax-e #'rn.arr))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'mov 'vec-reg-reg #f (list `rd.regnum `rn.regnum `rn.regnum `rd.q 0) '() #f))]
+   ; dup v0.4s w1 (b, h and s elements) or dup v0.2d x1 (d element)
+   [(_ (~optional label:label) (~datum dup) rd:vec-register rn:register)
+    #:when (if (= (syntax-e #'rd.esize) 3) (not (syntax-e #'rn.is32)) (syntax-e #'rn.is32))
+    #:with imm5 (arithmetic-shift 1 (syntax-e #'rd.esize))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'dup 'vec-reg-gp #f (list `rd.regnum `rn.regnum `rd.q `imm5) '() #f))]
+   ; movi v0.16b @5 (or 8b): one byte repeated in every lane
+   [(_ (~optional label:label) (~datum movi) rd:vec-register #:immediate n)
+    #:when (memq (syntax-e #'rd.arr) '(8b 16b))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'movi 'vec-reg-imm8 #f (list `rd.regnum `rd.q) (list n) #f))]
+   ; movi v0.2d @16711935: each byte of the 64 bit value must be 00 or FF
+   [(_ (~optional label:label) (~datum movi) rd:vec-register #:immediate n)
+    #:when (eq? (syntax-e #'rd.arr) '2d)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'movi 'vec-reg-imm8-d #f (list `rd.regnum `rd.q) (list n) #f))]
+   ; ld1 {v0.16b} [x1] and st1 {v0.4s} [x1]: the braces arrive as a one line arm-block
+   [(_ (~optional label:label) oc:opcode ((~datum arm-block) ((~datum arm-line) rt:vec-register)) (rn:register))
+    #:when (and (memq (syntax-e #'oc) '(ld1 st1)) (not (syntax-e #'rn.is32)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'vec-reg-addr #f (list `rt.regnum `rn.regnum `rt.q `rt.esize) '() #f))]
    ; nop
    [(_ (~optional label:label) oc:opcode)
     #'(begin
@@ -1770,7 +1991,14 @@
 
 (define-syntax (arm-block stx)
   (syntax-parse stx
-    ([_ line ... ] #'(begin line ... ))))
+    ([_ line ... ]
+     ; a block produced by a macro passes its use site to its lines
+     (define use (let ([ids (filter syntax-line (flatten-origin (syntax-property stx 'origin)))])
+                   (and (pair? ids) (list-ref ids (sub1 (length ids))))))
+     (with-syntax ([(tagged ...)
+                    (for/list ([l (syntax->list #'(line ...))])
+                      (if use (syntax-property l 'use-site (or (syntax-property l 'use-site) use)) l))])
+       #'(begin tagged ...)))))
 
 (define-syntax (data stx)
   (syntax-parse stx
@@ -1818,8 +2046,6 @@
     (λ (out)
       (fprintf out "# breakpoints for ~a, load with: source ~a\n" image-filename gdb-filename)
       (fprintf out "set $image_base = 0x80000\n")
-      (for ([r (reverse source-records)])   ; SPIKE: temporary dump
-        (printf "SRC ~x ~a:~a:~a\n" (car r) (cadr r) (caddr r) (cadddr r)))
       (for ([entry (obj-file-symbol-table current-obj)])
         (let ([name (hash-ref (obj-file-string-table current-obj) (car entry))])
           (when (string-prefix? name ":Bp-")
@@ -1945,7 +2171,8 @@
                  (when (hash-has-key? (obj-file-reverse-string-table merged) name)
                    (error (format "could not link as the global symbol ~a already exists" name)))))
              
-             (set-current-obj (merge-objs current-obj merged)))
+             (set-current-obj (merge-objs current-obj merged))
+             (relocate-linked-source! link-list))
 
            ;; (displayln "merged object files:")
            ;; (displayln current-obj)
@@ -2089,10 +2316,16 @@
                  (wdb "closing")
                  (displayln (format "wrote image file ~a" filename))
                  (close-output-port out)
+                 (write-debug-elf (string-append (regexp-replace #rx"[.]img$" filename "") ".elf")
+                                  (apply bytes (for/list ([i (obj-file-data current-obj)]) i))
+                                  source-records
+                                  func-records
+                                  filename)
                  (write-gdb-breakpoints filename))
                )
              (begin ; write object file
                (displayln (format "writing object file ~a" filename))
+               (store-obj-source! filename)
                (write-obj-file current-obj filename)
                
                )
