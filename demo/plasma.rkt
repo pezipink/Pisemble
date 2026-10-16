@@ -9,8 +9,8 @@
 ;; The platform flips the page and waits for the next 1/60s tick after
 ;; each Draw-frame. Tables can be computed in Racket at assembly time.
 ;;
-;; Build:  racket plasma.rkt            -> demo.obj + kernel8.img
-;; Run:    qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial null -serial stdio
+;; Build:  racket plasma.rkt            -> plasma.obj + plasma.img (beside this file)
+;; Run:    qemu-system-aarch64 -M raspi3b -kernel plasma.img -serial null -serial stdio
 (require "platform.rkt")
 
 ;; 256 entry sine, values 0..63

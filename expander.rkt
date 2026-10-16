@@ -930,9 +930,9 @@
     ['sev 'none          'none                               #xD503209F #f #f]
     ['wfe 'none          'none                               #b11010101000000110010000001011111 #f #f]))))
 
-(struct context (data location minl maxl jump-table branches-waiting linker-labels) #:mutable #:transparent)
+(struct context (data location minl maxl jump-table branches-waiting) #:mutable #:transparent)
 (struct target-label (immediate-encoder relative location) #:transparent)
-(define prog (context (make-vector (* 1024 1024) 0) 0 0 0 (make-hash) (make-hash) (list)))
+(define prog (context (make-vector (* 1024 1024) 0) 0 0 0 (make-hash) (make-hash)))
 
 (define (update-min v)
   (cond [(< v (context-minl prog)) (set-context-minl! prog v)]))
@@ -962,6 +962,7 @@
   (set-obj-file-object-composition! current-obj (obj-file-object-composition new-obj))
   (set-obj-file-symbol-table! current-obj (obj-file-symbol-table new-obj))
   (set-obj-file-target-table! current-obj (obj-file-target-table new-obj))
+  (set-obj-file-linker-table! current-obj (obj-file-linker-table new-obj))
   (set-obj-file-data! current-obj (obj-file-data new-obj)))
 
 
@@ -1007,12 +1008,11 @@
 
 (define (set-linker-resolved-label global-label location)
 ;  (displayln (format "label ~a loc ~a" global-label location))
-  ; append label * loction to the linker-labels list
-  (set-context-linker-labels!
-   prog
-   (cons
-    (cons global-label location)
-    (context-linker-labels prog))))
+  ; record the cell in the current object so that it is shifted when the object is merged
+  (set-current-obj
+   (match-let ([(cons index obj) (add-or-get-string current-obj (symbol->string global-label))])
+     (set-obj-file-linker-table! obj (cons (cons index location) (obj-file-linker-table obj)))
+     obj)))
          
 
 
@@ -1164,6 +1164,7 @@
 
     ; now we mark this as a target if applicable then write the bytes
     (when transition-target (write-transition-target transition-target final-address-encoder))
+    (note-frame-effect! final)
 ;    (pbin final)
 ;    (phex final)
 ;    (wdb "write-instruction ~a ~a ~a ~a ~a" opcode syntax-mode is-32bit? data-args immediate-address-args)
@@ -1371,14 +1372,84 @@
 (define source-records '())
 ;; function entries from subr: (offset . name), newest first
 (define func-records '())
+;; stack pointer changes for the CFI: (offset delta lr-slot), newest first. delta is
+;; the change to sp made by the instruction ending before offset; lr-slot is where
+;; the instruction stored x30, relative to sp after it, or #f.
+(define frame-records '())
+;; register renames in scope: (start end ((name regnum is32) ...)), newest first
+(define scope-records '())
+;; scopes opened by regs and not yet closed: (start . vars), innermost first
+(define open-scopes '())
 (define (reset-source-records!)
   (set! source-records '())
-  (set! func-records '()))
+  (set! func-records '())
+  (set! frame-records '())
+  (set! scope-records '())
+  (set! open-scopes '()))
 (define (note-source! file line col offset)
   (set! source-records (cons (list offset file line col) source-records)))
 (define (note-func! label)
   (define name (symbol->string label))
   (set! func-records (cons (cons (context-location prog) (substring name 1)) func-records)))
+(define (note-scope-start! vars)
+  (set! open-scopes (cons (cons (context-location prog) vars) open-scopes)))
+(define (note-scope-end!)
+  (unless (null? open-scopes)
+    (define top (car open-scopes))
+    (set! open-scopes (cdr open-scopes))
+    (set! scope-records
+          (cons (list (car top) (context-location prog) (cdr top)) scope-records))))
+
+(define (field word lo n) (bitwise-bit-field word lo (+ lo n)))
+(define (signed-field word lo n)
+  (define v (field word lo n))
+  (if (bitwise-bit-set? v (sub1 n)) (- v (arithmetic-shift 1 n)) v))
+;; sp effect of an encoded aarch64 word: (values delta lr-slot), 0 and #f when
+;; the word does not move sp
+(define (sp-effect word)
+  (define rt (field word 0 5))
+  (define rn (field word 5 5))
+  (define rt2 (field word 10 5))
+  (cond
+    ; add/sub immediate with Rd = Rn = sp
+    [(and (= (field word 24 5) #b10001) (= rt 31) (= rn 31) (= (field word 29 1) 0))
+     (define imm (* (field word 10 12) (if (= (field word 22 1) 1) 4096 1)))
+     (values (if (= (field word 30 1) 1) (- imm) imm) #f)]
+    ; single load/store based on sp: unsigned offset, unscaled, pre-index or post-index
+    [(and (= (field word 27 3) #b111) (= (field word 26 1) 0) (= rn 31)
+          (memv (field word 24 2) '(0 1)))
+     (define size (field word 30 2))
+     (define-values (addr delta)
+       (cond
+         [(= (field word 24 2) 1) (values (* (field word 10 12) (arithmetic-shift 1 size)) 0)]
+         [else
+          (define imm9 (signed-field word 12 9))
+          (case (field word 10 2)
+            [(0) (values imm9 0)]
+            [(1) (values 0 imm9)]
+            [(3) (values imm9 imm9)]
+            [else (values 0 0)])]))
+     (define store? (= (field word 22 1) 0))
+     (values delta (and store? (= rt 30) (- addr delta)))]
+    ; load/store pair based on sp
+    [(and (= (field word 27 3) #b101) (= (field word 26 1) 0) (= rn 31))
+     (define scale (if (= (field word 30 2) 2) 8 4))
+     (define off (* (signed-field word 15 7) scale))
+     (define type (field word 23 3))   ; 1 post-index, 2 signed offset, 3 pre-index
+     (define delta (if (memv type '(1 3)) off 0))
+     (define addr (if (= type 1) 0 off))
+     (define store? (= (field word 22 1) 0))
+     (values delta
+             (and store?
+                  (cond [(= rt 30) (- addr delta)]
+                        [(= rt2 30) (- (+ addr scale) delta)]
+                        [else #f])))]
+    [else (values 0 #f)]))
+(define (note-frame-effect! word)
+  (define-values (delta lr-slot) (sp-effect word))
+  (when (or (not (zero? delta)) lr-slot)
+    (set! frame-records
+          (cons (list (+ (context-location prog) 4) delta lr-slot) frame-records))))
 
 ;; records of each object written in this run, keyed by file name. aarch64 resets
 ;; source-records for every pass, so the image pass uses this store to relocate
@@ -1389,7 +1460,8 @@
     (cons (hash-ref (obj-file-string-table obj) (car entry)) (cdr entry))))
 (define (store-obj-source! filename)
   (hash-set! obj-source-store filename
-             (list (symbol-offsets current-obj) source-records func-records)))
+             (list (symbol-offsets current-obj) source-records func-records frame-records
+                   scope-records)))
 (define (relocate-linked-source! link-names)
   (define merged (symbol-offsets current-obj))
   (for ([fn link-names])
@@ -1407,7 +1479,15 @@
         (set! func-records
               (append (for/list ([f (caddr stored)])
                         (cons (+ base (car f)) (cdr f)))
-                      func-records))))))
+                      func-records))
+        (set! frame-records
+              (append (for/list ([r (cadddr stored)])
+                        (cons (+ base (car r)) (cdr r)))
+                      frame-records))
+        (set! scope-records
+              (append (for/list ([s (list-ref stored 4)])
+                        (list (+ base (car s)) (+ base (cadr s)) (caddr s)))
+                      scope-records))))))
 
 (begin-for-syntax
   (define (first-srcloc x)
@@ -2248,9 +2328,9 @@
                           ))])
                  ; first we can write fully resolved label addresses where requested from the
                  ; special resolve-global-label function
-                 (for* ([x (context-linker-labels prog)])
-                   (match-let*([(cons label location) x]
-                               [string-index (hash-ref (obj-file-reverse-string-table current-obj) (symbol->string label))]
+                 (for ([x (obj-file-linker-table current-obj)])
+                   (match-let*([(cons string-index location) x]
+                               [label (hash-ref (obj-file-string-table current-obj) string-index)]
                                [actual-location (hash-ref symbol-lookup string-index)])
                      (begin
                        (displayln (format "rewriting label ~a from\n $~a to $~a" label
@@ -2320,6 +2400,8 @@
                                   (apply bytes (for/list ([i (obj-file-data current-obj)]) i))
                                   source-records
                                   func-records
+                                  frame-records
+                                  scope-records
                                   filename)
                  (write-gdb-breakpoints filename))
                )

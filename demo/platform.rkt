@@ -15,25 +15,27 @@
 ;;     (require "platform.rkt")
 ;;     (demo { ...code and data, defining Demo-init and Draw-frame... })
 ;;     (demo #:bpp 8 { ... })    for 8 bit palette mode: 1 byte per pixel
-;; (demo ...) assembles your code into demo.obj, then builds kernel8.img from
-;; this platform code + demo.obj. Both go to the current directory.
+;; (demo ...) assembles your code into <name>.obj, then builds <name>.img from
+;; this platform code + <name>.obj. <name> is your demo file's name, and both
+;; files go in the same folder as the demo file. Running the demo from any
+;; directory gives the same output.
 ;; ROW-BYTES and PAGE-BYTES follow the chosen depth.
 ;;
 ;; Rules for demo code:
 ;;  * Demo-init and Draw-frame may use x0-x28 freely.
 ;;  * Labels starting with a capital letter are global. Only use capitals for
 ;;    Demo-init and Draw-frame, and don't call platform globals: the linker
-;;    refuses a demo.obj that references a symbol defined in the platform.
-;;  * demo.obj is linked at a 4KB boundary, so /= up to $1000 works as expected.
+;;    refuses a <name>.obj that references a symbol defined in the platform.
+;;  * <name>.obj is linked at a 4KB boundary, so /= up to $1000 works as expected.
 ;;
-;; Also assembled into demo.obj for you (lowercase, call with bl):
+;; Also assembled into the demo's object file (lowercase, call with bl):
 ;;     clear-screen   x0 = page, w1 = colour (palette index in 8 bit mode)
 ;;     fill-rect      x0 = page, x1 = x, x2 = y, x3 = w, x4 = h, w5 = colour
 ;;     set-palette    x0 = first index, x1 = count, x2 = address of rgb words
 ;;     send-char      so debug-str / debug-reg / debug-str-reg work
 ;; All preserve registers.
 ;;
-;; Image layout:  $80000 platform | vectors | page tables | demo.obj
+;; Image layout:  $80000 platform | vectors | page tables | <name>.obj
 ;; =====================================================================
 (require (for-syntax syntax/parse racket/stxparam racket/syntax))
 (require syntax/parse/define)
@@ -101,8 +103,9 @@
       (debug-reg reg)
      }])
 
-;; (breakpoint) emits no code. It defines the global label :Bp-<file>-L<line>C<col>, which
-;; the image link writes to <image>.gdb as a gdb breakpoint.
+;; (breakpoint) emits one nop so its line has its own address; without it the next line's
+;; code shares the address and stepping cannot leave this line. The nop carries the label
+;; :Bp-<file>-L<line>C<col>, which the image link writes to <image>.gdb as a gdb breakpoint.
 (define-syntax (breakpoint stx)
   (syntax-parse stx
     [(_)
@@ -113,9 +116,10 @@
              (regexp-replace* #rx"[^A-Za-z0-9]" (regexp-replace #rx"[.][^.]*$" (path->string name) "") "_"))
            "anon"))
      (with-syntax ([lbl (datum->syntax stx (string->symbol (format ":Bp-~a-L~aC~a" file-part (syntax-line stx) (syntax-column stx))))])
-       #'(try-set-jump-source 'lbl set-jump-source-current))]))
+       #'(begin (try-set-jump-source 'lbl set-jump-source-current)
+                (write-instruction 'nop 'none #f '() '() #f)))]))
 
-;; send-char with its own lowercase literal, so demo.obj has no global references
+;; send-char with its own lowercase literal, so the demo object has no global references
 (define-syntax-parser local-send-char
   [(_) #'{
      (subr send-char () [x0 x1 x2 x3] {
@@ -131,7 +135,7 @@
   }])
 
 ;; =====================================================================
-;; helpers assembled into demo.obj
+;; helpers assembled into the demo's object file
 ;; =====================================================================
 (define-syntax-parser gfx-library
   [(_) #'{
@@ -264,10 +268,19 @@
 ;; =====================================================================
 (define-syntax-parser demo
   [(_ (~optional (~seq #:bpp bpp:expr) #:defaults ([bpp #'32])) body ...)
-   #'(begin
-       (set-bpp! bpp)
-       (aarch64 "demo.obj" [] body ... { (gfx-library) })
-       (platform-image))])
+   (define src (syntax-source this-syntax))
+   (define-values (dir base-name)
+     (if (path-string? src)
+         (let-values ([(dir name must-be-dir?) (split-path (path->complete-path src))])
+           (values dir (regexp-replace #rx"[.][^.]*$" (path->string name) "")))
+         (values (current-directory) "demo")))
+   (define obj-file (path->string (build-path dir (string-append base-name ".obj"))))
+   (define img-file (path->string (build-path dir (string-append base-name ".img"))))
+   (with-syntax ([obj obj-file] [img img-file])
+     #'(begin
+         (set-bpp! bpp)
+         (aarch64 obj [] body ... { (gfx-library) })
+         (platform-image img obj)))])
 
 ;; =====================================================================
 ;; MMU: identity map, RAM write-back, GPU memory non-cacheable, peripherals device
@@ -332,7 +345,7 @@
 ;; the image
 ;; =====================================================================
 (define-syntax-parser platform-image
-  [(_) #'(aarch64 "kernel8.img" ["demo.obj"] {
+  [(_ img:string obj:string ...+) #'(aarch64 img [obj ...] {
 
      ; only core 0 runs
      mrs x0 mpidr_el1

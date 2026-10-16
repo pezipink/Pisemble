@@ -6,7 +6,9 @@
   (syntax-parse stx
     [(_ ([new-reg old-reg:register]...) expr ...)
      #'(let-syntax ([new-reg (make-rename-transformer #'old-reg)] ...)
-         expr ...)]))
+         (note-scope-start! '((new-reg old-reg.regnum old-reg.is32) ...))
+         expr ...
+         (note-scope-end!))]))
 
 (define-syntax (PUSH-REG-INNER stx)
   (writeln stx)
@@ -108,6 +110,7 @@
        (datum->syntax this-syntax label))
      #'(regs ([new-reg old-reg] ...)
          (try-set-jump-source `label set-jump-source-current)
+         (note-func! `label)
          (PUSH x30) ; always preserve return address register
          (PUSH used-reg) ...
          code

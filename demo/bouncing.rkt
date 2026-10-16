@@ -81,9 +81,11 @@
 (subr draw-ball
       ([page x0] [frame x1] [x-range x2] [y-range x3]
        [x-speed x4] [y-speed x5] [x-phase x6] [y-phase x7] [colour w8]
-       [saved-page x9] [cx x10] [cy x11])
-      [x9 x10 x11] {
+       [saved-page x9] [cx x10] [cy x11] [saved-y-range x12] [saved-y-speed x13])
+      [x9 x10 x11 x12 x13] {
   mov saved-page page
+  mov saved-y-range y-range
+  mov saved-y-speed y-speed
   mov x2 x-range
   mov x3 x-speed
   mov x4 x-phase
@@ -91,8 +93,8 @@
   bl bounce-axis:
   mov cx x0
 
-  mov x2 y-range
-  mov x3 y-speed
+  mov x2 saved-y-range
+  mov x3 saved-y-speed
   mov x4 y-phase
   mov x5 @radius
   bl bounce-axis:
@@ -108,15 +110,17 @@
 (subr draw-circle
       ([page x0] [cx x1] [cy x2] [colour w3]
        [spans x11] [remaining x12] [half-width x6]
-       [left x7] [row-y x8] [row-width x9] [saved-colour w5])
-      [x5 x6 x7 x8 x9 x11 x12] {
+       [left x7] [row-y x8] [row-width x9] [saved-colour w5] [centre x10])
+      [x5 x6 x7 x8 x9 x10 x11 x12] {
   adr spans circle-half-widths:
   mov saved-colour colour
+  ; fill-rect overwrites x1 and x2, so keep the centre in x10
+  mov centre cx
   mov remaining @diameter
   sub row-y cy @radius
 :next-circle-row
   ldrb w6 [spans] @1
-  sub left cx half-width
+  sub left centre half-width
   lsl row-width half-width @1
   add row-width row-width @1
   mov x1 left

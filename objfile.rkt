@@ -17,6 +17,9 @@
   ; a list of (string index * offset)
   ; this only ever happens when creating an image file, not obj files
   target-table
+  ; list of (string index * offset) for resolve-global-label-address cells; the address
+  ; of the named global is written into the cell when creating an image
+  linker-table
   ; actual bytes
   data )#:transparent #:mutable)
 
@@ -26,6 +29,7 @@
   (obj-file
    (make-immutable-hash)
    (make-immutable-hash)
+   '()
    '()
    '()
    '()
@@ -83,6 +87,11 @@
     (write-32 (car x) out)
     (write-64 (cdr x) out))
 
+  (write-32 (length (obj-file-linker-table obj-file)) out)
+  (for ([x (obj-file-linker-table obj-file)])
+    (write-32 (car x) out)
+    (write-64 (cdr x) out))
+
   ; output byte count  
   (write-64 (vector-length (obj-file-data obj-file)) out)
   (for ([n (in-range (vector-length (obj-file-data obj-file)))])
@@ -111,6 +120,9 @@
          [targ-list          
           (for/list ([n (read-32 in)])
             (cons (read-32 in) (read-64 in)))]
+         [link-list
+          (for/list ([n (read-32 in)])
+            (cons (read-32 in) (read-64 in)))]
          [data (let ([vec (make-vector (read-64 in))])
                  (for ([n (in-range (vector-length vec))])
                    (vector-set! vec n (read-8 in)))
@@ -124,6 +136,7 @@
      oc-list
      gsa-list
      targ-list
+     link-list
      data)))
 
 (define (create-dummy-obj)
@@ -143,6 +156,7 @@
    oa
    gsa
    tg
+   '()
    (list->vector '(42 90)))))
 (define (create-dummy-obj-2)
   (let ([st
@@ -162,6 +176,7 @@
    oa
    gsa
    tg
+   '()
    (list->vector '(42)))))
 
 ;; (write-obj-file (create-dummy-obj) "c:\\temp\\obj.obj")
@@ -220,6 +235,8 @@
    (map (match-lambda [(cons x y) (cons (hash-ref translations x) y)]) (obj-file-symbol-table merge-obj))
    ;targets
    (map (match-lambda [(cons x y) (cons (hash-ref translations x) y)]) (obj-file-target-table merge-obj))
+   ; linker labels
+   (map (match-lambda [(cons x y) (cons (hash-ref translations x) y)]) (obj-file-linker-table merge-obj))
  
    (obj-file-data merge-obj)))
 
@@ -322,6 +339,9 @@
      object-comp
      symbol-table
      target-table
+     (append (obj-file-linker-table core-obj)
+             (for/list ([x (obj-file-linker-table merge-obj)])
+               (cons (car x) (+ merge-data-offset (cdr x)))))
      data)))
 
  
@@ -376,6 +396,8 @@
  set-obj-file-symbol-table!
  obj-file-target-table
  set-obj-file-target-table!
+ obj-file-linker-table
+ set-obj-file-linker-table!
  obj-file-data
  set-obj-file-data!
 

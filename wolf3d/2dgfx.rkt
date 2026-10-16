@@ -42,6 +42,11 @@
   ))
 })
 
+(define (bgra->rgba bs)
+  (if (null? bs)
+      '()
+      (list* (caddr bs) (cadr bs) (car bs) (cadddr bs) (bgra->rgba (cddddr bs)))))
+
 (aarch64 "textures.obj" [] {
 
 ; these are the textures used in the raycaster
@@ -57,7 +62,7 @@
        (sort _ (λ (path1 path2)
                  (< (string->number (car (string-split path1 "." )))
                     (string->number (car (string-split path2 "." ))))))
-       (map (λ (path) (bytes->list (file->bytes (string-append "c:/repos/pisemble/wolf3d/wolftex/" path))))))])
+       (map (λ (path) (bgra->rgba (bytes->list (file->bytes (string-append "c:/repos/pisemble/wolf3d/wolftex/" path)))))))])
   (begin
     {
      :DATA-textures
