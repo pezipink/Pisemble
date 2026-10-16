@@ -512,11 +512,21 @@
     (error (format "~a shift amount must be between 0 and ~a, not ~a" kind max-amount amount)))
   (bitwise-ior (arithmetic-shift type 22) (arithmetic-shift amount 10)))
 
+; option (bits 15:13) and left shift amount (bits 12:10) of an extended register operand
+(define (extended-operand-bits kind is32? rm-is32? amount)
+  (define option (case kind [(UXTB) 0] [(UXTH) 1] [(UXTW) 2] [(UXTX) 3] [(SXTB) 4] [(SXTH) 5] [(SXTW) 6] [(SXTX) 7]))
+  (define x-register? (and (not is32?) (memv option '(3 7)) #t))
+  (unless (and (exact-nonnegative-integer? amount) (<= amount 4))
+    (error (format "~a extend amount must be between 0 and 4, not ~a" kind amount)))
+  (unless (eq? rm-is32? (not x-register?))
+    (error (format "~a requires a ~a register for Rm" kind (if x-register? "x" "w"))))
+  (bitwise-ior (arithmetic-shift option 13) (arithmetic-shift amount 10)))
+
 ; ldrsw only loads into x registers; ldrsb and ldrsh have a separate opcode for w destinations
 (define (sign-extending-load-mode oc is32?)
   (cond
-    [(and (eq? oc 'ldrsw) is32?) (error "ldrsw destination must be an x register")]
-    [(and is32? (not (eq? oc 'ldrsw))) 'reg_reg-imm_w]
+    [(and (memq oc '(ldrsw ldursw)) is32?) (error (format "~a destination must be an x register" oc))]
+    [(and is32? (not (memq oc '(ldrsw ldursw)))) 'reg_reg-imm_w]
     [else 'reg_reg-imm_]))
 
 (define opcode-metadata
@@ -611,6 +621,10 @@
      ['adds 'reg-reg-reg-shift  'rm-shift-rn-rd #xAB000000 b31 #f]
      ['sub  'reg-reg-reg-shift  'rm-shift-rn-rd #xCB000000 b31 #f]
      ['subs 'reg-reg-reg-shift  'rm-shift-rn-rd #xEB000000 b31 #f]
+     ['add  'reg-reg-reg-ext    'rm-shift-rn-rd #x8B200000 b31 #f]
+     ['adds 'reg-reg-reg-ext    'rm-shift-rn-rd #xAB200000 b31 #f]
+     ['sub  'reg-reg-reg-ext    'rm-shift-rn-rd #xCB200000 b31 #f]
+     ['subs 'reg-reg-reg-ext    'rm-shift-rn-rd #xEB200000 b31 #f]
      ['and  'reg-reg-reg-shift  'rm-shift-rn-rd #x8A000000 b31 #f]
      ['ands 'reg-reg-reg-shift  'rm-shift-rn-rd #xEA000000 b31 #f]
      ['orr  'reg-reg-reg-shift  'rm-shift-rn-rd #xAA000000 b31 #f]
@@ -729,6 +743,8 @@
     ['ldr    'fp-reg_reg-imm_ 'imm12-rn-rd    #xBD400000 #f shift-2]
     ['scvtf  'fp-gp          'rn-rd           #x9E220000 b31 #f]
     ['str    'fp-reg_reg-imm_ 'imm12-rn-rd    #xBD000000 #f shift-2]
+    ['ldr    'fp-reg_reg-reg-shift 'rm-option-s-rn-rd #xBC606800 #f #f]
+    ['str    'fp-reg_reg-reg-shift 'rm-option-s-rn-rd #xBC206800 #f #f]
 
     ['udiv 'reg-reg-reg  'rm-rn-rd                           #b10011010110000000000100000000000 b31 #f]
 
@@ -751,9 +767,15 @@
     ['clz  'reg-reg      'rn-rd                              #xDAC01000 b31 #f]
     ['rbit 'reg-reg      'rn-rd                              #xDAC00000 b31 #f]
     ['rev16 'reg-reg     'rn-rd                              #xDAC00400 b31 #f]
+    ['rev32 'reg-reg     'rn-rd                              #xDAC00800 #f #f]
     ['ldur  'reg_reg-imm_ 'imm9-rn-rd                        #xF8400000 b30 #f]
     ['ldurb 'reg_reg-imm_ 'imm9-rn-rd                        #x38400000 #f #f]
     ['ldurh 'reg_reg-imm_ 'imm9-rn-rd                        #x78400000 #f #f]
+    ['ldursb 'reg_reg-imm_  'imm9-rn-rd                      #x38800000 #f #f]
+    ['ldursb 'reg_reg-imm_w 'imm9-rn-rd                      #x38C00000 #f #f]
+    ['ldursh 'reg_reg-imm_  'imm9-rn-rd                      #x78800000 #f #f]
+    ['ldursh 'reg_reg-imm_w 'imm9-rn-rd                      #x78C00000 #f #f]
+    ['ldursw 'reg_reg-imm_  'imm9-rn-rd                      #xB8800000 #f #f]
     ['svc  'imm16-only   'imm16-only                         #xD4000001 #f #f]
     ['hvc  'imm16-only   'imm16-only                         #xD4000002 #f #f]
     ['smc  'imm16-only   'imm16-only                         #xD4000003 #f #f]
@@ -1153,9 +1175,9 @@
     '(adc adcs add adds adr and ands asr b b.eq b.ne b.cs b.cc b.mi b.pl b.vs b.vc
       b.hi b.ls b.ge b.lt b.gt b.le b.al bfi bic bics bl blr br brk cbz cbnz ccmp
       cinc clz cmn cmp cneg csel csinc csinv csneg cset dmb dsb eor eret extr hlt
-      hvc isb ldar ldaxr ldp ldr ldrh ldrb ldrsb ldrsh ldrsw ldur ldurb ldurh ldxr
-      lsl lsr madd mneg mov movk movn movz mrs msr msub mul neg nop orn orr prfm
-      rbit rev16 ret ror sbc sbfm sbfx scvtf sdiv sev smc smull smulh stlr stlxr
+      hvc isb ldar ldaxr ldp ldr ldrh ldrb ldrsb ldrsh ldrsw ldur ldurb ldurh ldursb ldursh ldursw ldxr
+      lsl lsr madd mneg mov movk movn movz mrs msr msub mul mvn neg nop orn orr prfm
+      rbit rev16 rev32 ret ror sbc sbfm sbfx scvtf sdiv sev smc smull smulh stlr stlxr
       stp str strb strh stur stxr sub subs svc sxtb sxth sxtw tst ubfm ubfx udiv
       umull umulh uxtb uxth wfe wfi fabs fadd fcmp fcvtzs fdiv fmov fmul fneg
       fsqrt fsub)))
@@ -1219,6 +1241,12 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-imm `rt.is32 (list `rt.regnum) (list n) #f))]
+   ; rev32 x0 x1 (64-bit only)
+   [(_ (~optional label:label) (~datum rev32) rt:register rn:register)
+    #:when (not (or (syntax-e #'rt.is32) (syntax-e #'rn.is32)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'rev32 'reg-reg #f (list `rt.regnum `rn.regnum) '() #f))]
    ; mov sp x1
    [(_ (~optional label:label) oc:opcode rt:register rn:register)
     #:when (equal? (syntax-e #'rt) 'sp)
@@ -1251,11 +1279,11 @@
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg_reg-imm_excla `rt.is32 (list `rt.regnum `rn.regnum) (list n) #f))]
    ; ldrsw x0 [x1 @8], ldrsb x0 [x1 @3], ldrsh x0 [x1 @4]; w destinations select the _w opcode
-   [(_ (~optional label:label) (~and oc (~or (~datum ldrsw) (~datum ldrsb) (~datum ldrsh))) rt:register (rn:register #:immediate n))
+   [(_ (~optional label:label) (~and oc (~or (~datum ldrsw) (~datum ldrsb) (~datum ldrsh) (~datum ldursw) (~datum ldursb) (~datum ldursh))) rt:register (rn:register #:immediate n))
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc (sign-extending-load-mode 'oc `rt.is32) `rt.is32 (list `rt.regnum `rn.regnum) (list n) #f))]
-   [(_ (~optional label:label) (~and oc (~or (~datum ldrsw) (~datum ldrsb) (~datum ldrsh))) rt:register (rn:register))
+   [(_ (~optional label:label) (~and oc (~or (~datum ldrsw) (~datum ldrsb) (~datum ldrsh) (~datum ldursw) (~datum ldursb) (~datum ldursh))) rt:register (rn:register))
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc (sign-extending-load-mode 'oc `rt.is32) `rt.is32 (list `rt.regnum `rn.regnum) (list 0) #f))]
@@ -1423,21 +1451,52 @@
         (write-instruction 'oc 'reg-reg-reg-shift `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum (shifted-operand-bits 'shift `rt.is32 n)) '() #f))]
    ; cinc x0 x1 eq is csinc x0 x1 x1 with the inverted condition
    [(_ (~optional label:label) (~datum cinc) rt:register rn:register cond:condition)
+    #:when (not (eq? (syntax-e #'cond) 'al))
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'csinc 'reg-reg-reg-cond `rt.is32 (list `rt.regnum `rn.regnum `rn.regnum (bitwise-xor `cond.condnum 1)) '() #f))]
    ; cneg x0 x1 eq is csneg x0 x1 x1 with the inverted condition
    [(_ (~optional label:label) (~datum cneg) rt:register rn:register cond:condition)
+    #:when (not (eq? (syntax-e #'cond) 'al))
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'csneg 'reg-reg-reg-cond `rt.is32 (list `rt.regnum `rn.regnum `rn.regnum (bitwise-xor `cond.condnum 1)) '() #f))]
+   ; add x0 x1 w2 UXTW #2 (also adds, sub and subs); the amount is optional
+   [(_ (~optional label:label) oc:opcode rt:register rn:register rm:register ext:id #:immediate n)
+    #:when (and (memq (syntax-e #'oc) '(add adds sub subs))
+                (memq (syntax-e #'ext) '(UXTB UXTH UXTW UXTX SXTB SXTH SXTW SXTX))
+                (eq? (syntax-e #'rt.is32) (syntax-e #'rn.is32)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-reg-reg-ext `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum (extended-operand-bits 'ext `rt.is32 `rm.is32 n)) '() #f))]
+   [(_ (~optional label:label) oc:opcode rt:register rn:register rm:register ext:id)
+    #:when (and (memq (syntax-e #'oc) '(add adds sub subs))
+                (memq (syntax-e #'ext) '(UXTB UXTH UXTW UXTX SXTB SXTH SXTW SXTX))
+                (eq? (syntax-e #'rt.is32) (syntax-e #'rn.is32)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-reg-reg-ext `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum (extended-operand-bits 'ext `rt.is32 `rm.is32 0)) '() #f))]
+   ; mvn x0 x1 is orn x0 xzr x1
+   [(_ (~optional label:label) (~datum mvn) rt:register rm:register)
+    #:when (eq? (syntax-e #'rt.is32) (syntax-e #'rm.is32))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'orn 'reg-reg-reg `rt.is32 (list `rt.regnum 31 `rm.regnum) '() #f))]
+   ; mvn x0 x1 LSL @2 is orn x0 xzr x1 LSL @2
+   [(_ (~optional label:label) (~datum mvn) rt:register rm:register shift:id #:immediate n)
+    #:when (and (memq (syntax-e #'shift) '(LSL LSR ASR ROR))
+                (eq? (syntax-e #'rt.is32) (syntax-e #'rm.is32)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'orn 'reg-reg-reg-shift `rt.is32 (list `rt.regnum 31 `rm.regnum (shifted-operand-bits 'shift `rt.is32 n)) '() #f))]
    ; add x1 x2 x4
    [(_ (~optional label:label) oc:opcode rt:register rn:register rm:register)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-reg-reg `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum) '() #f))]
-   ; cset x0 eq is csinc x0 xzr xzr with the inverted condition
+   ; cset x0 eq is csinc x0 xzr xzr with the inverted condition; al is not a valid alias condition
    [(_ (~optional label:label) oc:opcode rt:register cond:condition)
+    #:when (not (eq? (syntax-e #'cond) 'al))
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'csinc 'reg-reg-reg-cond `rt.is32 (list `rt.regnum 31 31 (bitwise-xor `cond.condnum 1)) '() #f))]
@@ -1489,6 +1548,17 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'fp-reg_reg-imm_ #f (list `rt.regnum `rn.regnum) (list 0) #f))]
+   ; ldr s0 [x1 x2] and ldr s0 [x1 x2 LSL @2]: register offset, Rm must be an x register
+   [(_ (~optional label:label) oc:opcode rt:fpu-register (rn:register rm:register))
+    #:when (and (memq (syntax-e #'oc) '(ldr str)) (not (syntax-e #'rm.is32)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'fp-reg_reg-reg-shift #f (list `rt.regnum `rn.regnum `rm.regnum (register-offset-s-bit 'oc #t #f)) '() #f))]
+   [(_ (~optional label:label) oc:opcode rt:fpu-register (rn:register rm:register (~datum LSL) #:immediate s))
+    #:when (and (memq (syntax-e #'oc) '(ldr str)) (not (syntax-e #'rm.is32)))
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'fp-reg_reg-reg-shift #f (list `rt.regnum `rn.regnum `rm.regnum (register-offset-s-bit 'oc #t s)) '() #f))]
    ; fadd s0 s1 s2
    [(_ (~optional label:label) oc:opcode rd:fpu-register rn:fpu-register rm:fpu-register)
     #'(begin
