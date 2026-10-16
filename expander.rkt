@@ -319,6 +319,19 @@
      (match-lambda
        [(list bin) bin])
      ]
+    ['rn-rd
+      (match-lambda
+        [(list bin rd rn)
+         (bitwise-ior-n rd (arithmetic-shift rn 5) bin)])
+      (match-lambda
+        [(list bin) bin])]
+    ['rm-rn-rd-imms
+      (match-lambda
+        [(list bin rd rn rm)
+         (bitwise-ior-n rd (arithmetic-shift rn 5) (arithmetic-shift rm 16) bin)])
+      (match-lambda
+        [(list bin imms)
+         (bitwise-ior-n bin (arithmetic-shift imms 10))])]
     ['rn-rd-immr-imms
      (match-lambda
        [(list bin rd rn)
@@ -476,6 +489,12 @@
       (error (format "bitfield immediate ~a must be between 0 and ~a" imm max-val))
       imm))
 
+; ccmp operands: nzcv is 0-15 and the immediate form takes a 5-bit value
+(define (ccmp-operand-in-range what v max-val)
+  (if (and (exact-integer? v) (<= 0 v max-val))
+      v
+      (error (format "ccmp ~a must be between 0 and ~a, not ~a" what max-val v))))
+
 ; S bit of a register offset load/store: LSL #0 or LSL #log2(access size)
 (define (register-offset-s-bit oc is32? amount)
   (define log2-size (case oc [(ldrb strb) 0] [(ldrh strh) 1] [else (if is32? 2 3)]))
@@ -522,6 +541,10 @@
                (if (eq? 0 (bitwise-and #b111 imm))
                    (arithmetic-shift imm -3)
                    (error "not divisible by 8"))))]
+        [shift-3 (λ (imm is32?)
+                   (if (eq? 0 (bitwise-and #b111 imm))
+                       (arithmetic-shift imm -3)
+                       (error "not divisible by 8")))]
         [shift-2 (λ (imm is32?)
                    (if (eq? 0 (bitwise-and #b11 imm))
                        (arithmetic-shift imm -2)
@@ -592,11 +615,22 @@
      ['ands 'reg-reg-reg-shift  'rm-shift-rn-rd #xEA000000 b31 #f]
      ['orr  'reg-reg-reg-shift  'rm-shift-rn-rd #xAA000000 b31 #f]
      ['eor  'reg-reg-reg-shift  'rm-shift-rn-rd #xCA000000 b31 #f]
+     ['bic  'reg-reg-reg-shift  'rm-shift-rn-rd #x8A200000 b31 #f]
+     ['bics 'reg-reg-reg-shift  'rm-shift-rn-rd #xEA200000 b31 #f]
+     ['orn  'reg-reg-reg-shift  'rm-shift-rn-rd #xAA200000 b31 #f]
+     ['bic  'reg-reg-reg        'rm-rn-rd                     #x8A200000 b31 #f]
+     ['bics 'reg-reg-reg        'rm-rn-rd                     #xEA200000 b31 #f]
+     ['orn  'reg-reg-reg        'rm-rn-rd                     #xAA200000 b31 #f]
+     ['adc  'reg-reg-reg        'rm-rn-rd                     #x9A000000 b31 #f]
+     ['sbc  'reg-reg-reg        'rm-rn-rd                     #xDA000000 b31 #f]
      ['ldrsw 'reg_reg-imm_   'imm12-rn-rd #xB9800000 #f shift-2]
      ['ldrsb 'reg_reg-imm_   'imm12-rn-rd #x39800000 #f #f]
      ['ldrsb 'reg_reg-imm_w  'imm12-rn-rd #x39C00000 #f #f]
      ['ldrsh 'reg_reg-imm_   'imm12-rn-rd #x79800000 #f always-shift-1]
      ['ldrsh 'reg_reg-imm_w  'imm12-rn-rd #x79C00000 #f always-shift-1]
+     ['prfm 'reg_reg-imm_    'imm12-rn-rd #xF9800000 #f shift-3]
+     ['ccmp 'ccmp-reg        'rm-cond-rn-rd #xFA400000 b31 #f]
+     ['ccmp 'ccmp-imm        'rm-cond-rn-rd #xFA400800 b31 #f]
     ['ldr 'reg_reg_imm  'imm9-rn-rd                          #b11111000010000000000010000000000 b30 #f]
     ['ldr 'reg_reg-imm_excla  'imm9-rn-rd                    #b11111000010000000000110000000000 b30 #f]
 
@@ -621,8 +655,18 @@
     ; 64-bit only: the 32-bit forms are rejected by the arm-line clauses
     ['smulh 'reg-reg-reg 'rm-rn-rd                           #x9B407C00 #f #f]
     ['umulh 'reg-reg-reg 'rm-rn-rd                           #x9BC07C00 #f #f]
+     ['smull 'reg-reg-reg 'rm-rn-rd                           #x9B207C00 #f #f]
+     ['umull 'reg-reg-reg 'rm-rn-rd                           #x9BA07C00 #f #f]
+     ['ldxr  'reg-addr        'rn-rd                          #xC85F7C00 #xBFFFFFFF #f]
+     ['ldaxr 'reg-addr        'rn-rd                          #xC85FFC00 #xBFFFFFFF #f]
+     ['ldar  'reg-addr        'rn-rd                          #xC8DFFC00 #xBFFFFFFF #f]
+     ['stlr  'reg-addr        'rn-rd                          #xC89FFC00 #xBFFFFFFF #f]
+     ['stxr  'reg-addr-status 'rm-rn-rd                       #xC8007C00 #xBFFFFFFF #f]
+     ['stlxr 'reg-addr-status 'rm-rn-rd                       #xC800FC00 #xBFFFFFFF #f]
     ['ubfm 'reg-reg-imm-imm 'rn-rd-immr-imms                 #xD3400000 #x7FBFFFFF bitfield-in-range]
     ['sbfm 'reg-reg-imm-imm 'rn-rd-immr-imms                 #x93400000 #x7FBFFFFF bitfield-in-range]
+     ['bfm 'reg-reg-imm-imm 'rn-rd-immr-imms                 #xB3400000 #x7FBFFFFF bitfield-in-range]
+     ['extr 'reg-reg-reg-imm 'rm-rn-rd-imms                  #x93C00000 #x7FBFFFFF bitfield-in-range]
 
     ['mov 'reg-reg       'rm-rd                              #b10101010000000000000001111100000 b31 #f]
     ; todo: not sure N here works always set to one with 32 bhit as well?
@@ -699,6 +743,8 @@
     ['movn 'reg-imm      'imm16-rd                           #x92800000 b31 #f]
     ['movn 'reg-imm-shift 'hw-imm16-rd                       #x92800000 b31 #f]
     ['csinc 'reg-reg-reg-cond 'rm-cond-rn-rd                 #x9A800400 b31 #f]
+     ['csinv 'reg-reg-reg-cond 'rm-cond-rn-rd                 #xDA800000 b31 #f]
+     ['csneg 'reg-reg-reg-cond 'rm-cond-rn-rd                 #xDA800400 b31 #f]
     ['br   'reg          'rn                                 #xD61F0000 #f #f]
     ['blr  'reg          'rn                                 #xD63F0000 #f #f]
     ['ret  'none         'none                               #xD65F03C0 #f #f]
@@ -1061,7 +1107,7 @@
                            'fabs 'fadd 'fcmp 'fcvtzs 'fdiv 'fmov 'fmul 'fneg 'fsqrt 'fsub
                            'adds 'subs 'cmn 'tst 'ands 'sdiv 'movn 'csinc 'cset 'br 'blr 'clz 'rbit 'rev16
                            'ldur 'ldurb 'ldurh 'svc 'hvc 'smc 'brk 'hlt 'dmb 'dsb 'isb 'wfi 'sev
-                           'madd 'msub 'ror 'ubfm 'sbfm 'ldrsw 'ldrsb 'ldrsh))]
+                           'madd 'msub 'ror 'ubfm 'sbfm 'ldrsw 'ldrsb 'ldrsh 'csinv 'csneg 'bic 'bics 'orn 'adc 'sbc))]
              #:when (ormap (λ (x) (eq? sym x)) ocs)))
   (define-syntax-class register
     #:description "register"
@@ -1249,7 +1295,56 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-reg-reg-reg `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum `ra.regnum) '() #f))]
-   ; mneg x0 x1 x2 is msub x0 x1 x2 xzr
+   ; ldxr x0 [x1], ldaxr, ldar and stlr: exclusive and ordered access with no offset
+    [(_ (~optional label:label) oc:id rt:register (rn:register))
+     #:when (and (memq (syntax-e #'oc) '(ldxr ldaxr ldar stlr)) (not (syntax-e #'rn.is32)))
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (write-instruction 'oc 'reg-addr `rt.is32 (list `rt.regnum `rn.regnum) '() #f))]
+    ; stxr w0 x1 [x2] and stlxr: the status register is a 32-bit Rs
+    [(_ (~optional label:label) oc:id rs:register rt:register (rn:register))
+     #:when (and (memq (syntax-e #'oc) '(stxr stlxr)) (syntax-e #'rs.is32) (not (syntax-e #'rn.is32)))
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (write-instruction 'oc 'reg-addr-status `rt.is32 (list `rt.regnum `rn.regnum `rs.regnum) '() #f))]
+    ; ccmp x0 @5 @nzcv cond: compare with a 5-bit immediate
+    [(_ (~optional label:label) (~datum ccmp) rn:register #:immediate imm #:immediate nzcv cond:condition)
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (write-instruction 'ccmp 'ccmp-imm `rn.is32
+                            (list (ccmp-operand-in-range "nzcv" nzcv 15) `rn.regnum (ccmp-operand-in-range "immediate" imm 31) `cond.condnum)
+                            '() #f))]
+    ; ccmp x0 x1 @nzcv cond: compare with a register
+    [(_ (~optional label:label) (~datum ccmp) rn:register rm:register #:immediate nzcv cond:condition)
+     #:when (eq? (syntax-e #'rn.is32) (syntax-e #'rm.is32))
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (write-instruction 'ccmp 'ccmp-reg `rn.is32
+                            (list (ccmp-operand-in-range "nzcv" nzcv 15) `rn.regnum `rm.regnum `cond.condnum)
+                            '() #f))]
+    ; prfm with a prefetch operation in Rt and an unsigned, scaled offset
+    [(_ (~optional label:label) oc:id #:immediate op (rn:register))
+     #:when (eq? (syntax-e #'oc) 'prfm)
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (write-instruction 'oc 'reg_reg-imm_ #f (list op `rn.regnum) (list 0) #f))]
+    [(_ (~optional label:label) oc:id #:immediate op (rn:register #:immediate n))
+     #:when (eq? (syntax-e #'oc) 'prfm)
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (write-instruction 'oc 'reg_reg-imm_ #f (list op `rn.regnum) (list n) #f))]
+    ; smull x0 w1 w2 and umull x0 w1 w2: 64-bit destination, 32-bit sources
+    [(_ (~optional label:label) (~datum smull) rt:register rn:register rm:register)
+     #:when (and (not (syntax-e #'rt.is32)) (syntax-e #'rn.is32) (syntax-e #'rm.is32))
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (write-instruction 'smull 'reg-reg-reg #f (list `rt.regnum `rn.regnum `rm.regnum) '() #f))]
+    [(_ (~optional label:label) (~datum umull) rt:register rn:register rm:register)
+     #:when (and (not (syntax-e #'rt.is32)) (syntax-e #'rn.is32) (syntax-e #'rm.is32))
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (write-instruction 'umull 'reg-reg-reg #f (list `rt.regnum `rn.regnum `rm.regnum) '() #f))]
+    ; mneg x0 x1 x2 is msub x0 x1 x2 xzr
    [(_ (~optional label:label) (~datum mneg) rt:register rn:register rm:register)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
@@ -1278,7 +1373,23 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'ubfm 'reg-reg-imm-imm #t (list `rt.regnum `rn.regnum) (list 0 15) #f))]
-   ; ubfx x0 x1 #lsb #width is ubfm x0 x1 #lsb #(lsb+width-1)
+   ; bfi x0 x1 #lsb #width is bfm x0 x1 #(-lsb mod size) #(width-1)
+    [(_ (~optional label:label) (~datum bfi) rt:register rn:register #:immediate lsb #:immediate width)
+     #:when (eq? (syntax-e #'rt.is32) (syntax-e #'rn.is32))
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (let* ([size (if `rt.is32 32 64)]
+                [lsb-val lsb] [width-val width])
+           (unless (and (<= 0 lsb-val (sub1 size)) (<= 1 width-val (- size lsb-val)))
+             (error (format "bfi lsb ~a and width ~a do not fit in a ~a-bit register" lsb-val width-val size)))
+           (write-instruction 'bfm 'reg-reg-imm-imm `rt.is32 (list `rt.regnum `rn.regnum) (list (modulo (- lsb-val) size) (sub1 width-val)) #f)))]
+    ; extr x0 x1 x2 #lsb
+    [(_ (~optional label:label) (~datum extr) rt:register rn:register rm:register #:immediate lsb)
+     #:when (and (eq? (syntax-e #'rt.is32) (syntax-e #'rn.is32)) (eq? (syntax-e #'rt.is32) (syntax-e #'rm.is32)))
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (write-instruction 'extr 'reg-reg-reg-imm `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum) (list lsb) #f))]
+    ; ubfx x0 x1 #lsb #width is ubfm x0 x1 #lsb #(lsb+width-1)
    [(_ (~optional label:label) (~datum ubfx) rt:register rn:register #:immediate lsb #:immediate width)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
@@ -1296,6 +1407,16 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-reg-reg-shift `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum (shifted-operand-bits 'shift `rt.is32 n)) '() #f))]
+   ; cinc x0 x1 eq is csinc x0 x1 x1 with the inverted condition
+   [(_ (~optional label:label) (~datum cinc) rt:register rn:register cond:condition)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'csinc 'reg-reg-reg-cond `rt.is32 (list `rt.regnum `rn.regnum `rn.regnum (bitwise-xor `cond.condnum 1)) '() #f))]
+   ; cneg x0 x1 eq is csneg x0 x1 x1 with the inverted condition
+   [(_ (~optional label:label) (~datum cneg) rt:register rn:register cond:condition)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'csneg 'reg-reg-reg-cond `rt.is32 (list `rt.regnum `rn.regnum `rn.regnum (bitwise-xor `cond.condnum 1)) '() #f))]
    ; add x1 x2 x4
    [(_ (~optional label:label) oc:opcode rt:register rn:register rm:register)
     #'(begin
