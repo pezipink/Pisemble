@@ -38,6 +38,16 @@
 ; (add x0 x0 x0        $0       )    
 (aarch64 "instruction-test.img" []{
  (test
+ ; tbz/tbnz: the first rows are at known offsets so the linked bytes can be checked after the block
+ (:tbz_back nop            $1F2003D5)
+ (tbz x0 @3 tbz_back:      $00001836)
+ (tbnz x1 @40 tbz_fwd:     $010040B7)
+ (nop                      $1F2003D5)
+ (:tbz_fwd nop             $1F2003D5)
+ (tbz w2 @31 tbz_fwd:      $0200F836)
+ (tbnz w2 @31 tbz_fwd:     $0200F837)
+ (tbz x0 @32 tbz_fwd:      $000000B6)
+ (tbnz x0 @63 tbz_fwd:     $0000F8B7)
  ;reg to reg mov
  (mov x0 x1           $E00301AA)
  (mov x0 x0           $E00300AA)
@@ -315,3 +325,12 @@
  )
   
 })
+
+; check the linked branch words, the image starts at the first row (location 0)
+(define linked-image (call-with-input-file "instruction-test.img" (lambda (in) (read-bytes 16 in))))
+(unless (equal? (subbytes linked-image 0 4) (bytes #x1F #x20 #x03 #xD5))
+  (error "tbz test: row at 0 is not the nop"))
+(unless (equal? (subbytes linked-image 4 8) (bytes #xE0 #xFF #x1F #x36))
+  (error (format "tbz back-branch linked to ~a" (subbytes linked-image 4 8))))
+(unless (equal? (subbytes linked-image 8 12) (bytes #x41 #x00 #x40 #xB7))
+  (error (format "tbnz forward-branch linked to ~a" (subbytes linked-image 8 12))))

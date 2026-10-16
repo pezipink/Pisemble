@@ -110,6 +110,22 @@
         ; shift left by 3, then splat the top 19 bits and lower 5 bits
         (let ([shifted (bitwise-and #x00FFFFE0 (arithmetic-shift imm19 3))])
           (bitwise-ior bin shifted))])     ]
+    ['tbz-rt-bit
+     (match-lambda
+       [(list bin rt bit is32)
+        (when (or (< bit 0) (> bit 63))
+          (error (format "error: bit number ~a is out of range 0-63" bit)))
+        (when (and is32 (>= bit 32))
+          (error (format "error: bit number ~a is out of range for a w register" bit)))
+        ; bit 5 of the bit number goes to bit 31, bits 4-0 go to 23-19
+        (bitwise-ior-n bin rt (arithmetic-shift (bitwise-and bit #x1F) 19)
+                       (if (>= bit 32) #x80000000 0))])
+     (match-lambda
+       [(list bin imm)
+        ; imm14 is a word offset, so it covers -32768..32764 bytes
+        (when (or (< imm -32768) (> imm 32764) (not (zero? (bitwise-and imm 3))))
+          (error (format "error: branch offset ~a is out of range for tbz/tbnz" imm)))
+        (bitwise-ior-n bin (arithmetic-shift (bitwise-and #x3FFF (arithmetic-shift imm -2)) 5))])]
     ['imm19
      (match-lambda
        [(list bin) bin])
@@ -600,6 +616,8 @@
     ['bl  'lbl           'imm26                              #b10010100000000000000000000000000 #f #f]
     ['cbz 'reg-lbl       'imm19-rt                           #b10110100000000000000000000000000 b31 #f]
     ['cbnz 'reg-lbl      'imm19-rt                           #b10110101000000000000000000000000 b31 #f]
+    ['tbz  'reg-bit-lbl  'tbz-rt-bit                         #x36000000 #f #f]
+    ['tbnz 'reg-bit-lbl  'tbz-rt-bit                         #x37000000 #f #f]
     ['cmp  'reg-reg      'rm-rn                              #b11101011000000000000000000011111 b31 #f]
     ['cmp  'reg-imm      'imm12-rn                           #b11110001000000000000000000011111 b31 #f]
     ['csel 'reg-reg-reg-cond 'rm-cond-rn-rd                  #b10011010100000000000000000000000 b31 #f]
@@ -1133,7 +1151,7 @@
              #:do [(define sym (syntax-e (attribute x)))
                    (define ocs
                      (list 'add 'adr 'and 'asr 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
-                           'bl 'cbz 'cbnz 'csel 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'nop
+                           'bl 'cbz 'cbnz 'tbz 'tbnz 'csel 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'nop
                            'orr 'ret 'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'sxtb 'sxth 'sxtw 'udiv 'wfe
                            'fabs 'fadd 'fcmp 'fcvtzs 'fcvtzu 'fdiv 'fmov 'fmul 'fneg 'fsqrt 'fsub 'fmax 'fmin 'fmadd 'fmsub 'fnmadd 'fnmsub 'ucvtf 'fcsel
                            'adds 'subs 'cmn 'tst 'ands 'sdiv 'movn 'csinc 'cset 'br 'blr 'clz 'rbit 'rev16
@@ -1187,7 +1205,7 @@
       hvc isb ldar ldaxr ldp ldr ldrh ldrb ldrsb ldrsh ldrsw ldur ldurb ldurh ldursb ldursh ldursw ldxr
       lsl lsr madd mneg mov movk movn movz mrs msr msub mul mvn neg nop orn orr prfm
       rbit rev16 rev32 ret ror sbc sbfm sbfx scvtf sdiv sev smc smull smulh stlr stlxr
-      stp str strb strh stur stxr sub subs svc sxtb sxth sxtw tst ubfm ubfx udiv
+      stp str strb strh stur stxr sub subs svc sxtb sxth sxtw tbnz tbz tst ubfm ubfx udiv
       umull umulh uxtb uxth wfe wfi fabs fadd fcmp fcvtzs fdiv fmov fmul fneg
       fsqrt fsub fcvtzu fmax fmin fmadd fmsub fnmadd fnmsub ucvtf fcsel)))
 
@@ -1209,6 +1227,11 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-lbl `rt.is32 (list `rt.regnum) '(0) 'targ))]
+   ; tbz x0 @3 lbl: (bit number via @n, the bit field is encoded from it)
+   [(_ (~optional label:label) (~and oc (~or (~datum tbz) (~datum tbnz))) rt:register #:immediate bit targ:label-targ)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'oc 'reg-bit-lbl #f (list `rt.regnum bit `rt.is32) '(0) 'targ))]
    ; ret x30
    [(_ (~optional label:label) oc:opcode rn:register)
     #'(begin
@@ -1932,6 +1955,11 @@
                             (equal? top-byte #b01011000))
                        ; cbz, cbnz
                         (let* ([encoder (encoders-address-encoder (hash-ref opcode-encoders 'imm19-rt))]
+                               [modified (encoder (list whole amount))])
+                          (rewrite offset modified))]
+                       [(memv top-byte '(#x36 #x37 #xB6 #xB7))
+                       ; tbz, tbnz (b5 is bit 31, so the top byte can be 0xB6/0xB7)
+                        (let* ([encoder (encoders-address-encoder (hash-ref opcode-encoders 'tbz-rt-bit))]
                                [modified (encoder (list whole amount))])
                           (rewrite offset modified))]
 
