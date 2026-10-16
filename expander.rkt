@@ -506,7 +506,7 @@
 
 ; shift type (bits 23:22) and amount (bits 15:10) of a shifted register operand
 (define (shifted-operand-bits kind is32? amount)
-  (define type (case kind [(LSL) 0] [(LSR) 1] [(ASR) 2]))
+  (define type (case kind [(LSL) 0] [(LSR) 1] [(ASR) 2] [(ROR) 3]))
   (define max-amount (if is32? 31 63))
   (unless (and (exact-nonnegative-integer? amount) (<= amount max-amount))
     (error (format "~a shift amount must be between 0 and ~a, not ~a" kind max-amount amount)))
@@ -1148,6 +1148,18 @@
   (define-syntax-class register-64
     (pattern x:register
              #:when (not (syntax-e #'x.is32)))))
+(begin-for-syntax
+  (define assembler-mnemonics
+    '(adc adcs add adds adr and ands asr b b.eq b.ne b.cs b.cc b.mi b.pl b.vs b.vc
+      b.hi b.ls b.ge b.lt b.gt b.le b.al bfi bic bics bl blr br brk cbz cbnz ccmp
+      cinc clz cmn cmp cneg csel csinc csinv csneg cset dmb dsb eor eret extr hlt
+      hvc isb ldar ldaxr ldp ldr ldrh ldrb ldrsb ldrsh ldrsw ldur ldurb ldurh ldxr
+      lsl lsr madd mneg mov movk movn movz mrs msr msub mul neg nop orn orr prfm
+      rbit rev16 ret ror sbc sbfm sbfx scvtf sdiv sev smc smull smulh stlr stlxr
+      stp str strb strh stur stxr sub subs svc sxtb sxth sxtw tst ubfm ubfx udiv
+      umull umulh uxtb uxth wfe wfi fabs fadd fcmp fcvtzs fdiv fmov fmul fneg
+      fsqrt fsub)))
+
 (define-syntax (arm-line stx)
 ;  (writeln stx)
   (syntax-parse stx #:datum-literals (= ! LSL )
@@ -1401,9 +1413,11 @@
         (~? (try-set-jump-source `label set-jump-source-current))
         (let ([lsb-val lsb] [width-val width])
           (write-instruction 'sbfm 'reg-reg-imm-imm `rt.is32 (list `rt.regnum `rn.regnum) (list lsb-val (+ lsb-val width-val -1)) #f)))]
-   ; add x0 x1 x2 LSL @4 (also LSR and ASR)
+   ; add x0 x1 x2 LSL @4 (also LSR and ASR; ROR only for the logical forms)
    [(_ (~optional label:label) oc:opcode rt:register rn:register rm:register shift:id #:immediate n)
-    #:when (memq (syntax-e #'shift) '(LSL LSR ASR))
+    #:when (or (memq (syntax-e #'shift) '(LSL LSR ASR))
+               (and (eq? (syntax-e #'shift) 'ROR)
+                    (memq (syntax-e #'oc) '(and ands orr eor bic bics orn))))
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-reg-reg-shift `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum (shifted-operand-bits 'shift `rt.is32 n)) '() #f))]
@@ -1504,6 +1518,13 @@
    
    [(_ v:identifier = e:expr)
      #'(define v e)]
+
+   ; an assembler mnemonic that matched no instruction form is an error,
+   ; not a call to an unbound Racket identifier
+   [(_ head:id . args)
+    #:when (and (memq (syntax-e #'head) assembler-mnemonics)
+                (not (identifier-binding #'head)))
+    (raise-syntax-error #f (format "invalid operands for instruction '~a'" (syntax-e #'head)) stx)]
 
    [(_ e:expr ... ) #'(begin e ...) ]
    [(_ e ) #'e] ))

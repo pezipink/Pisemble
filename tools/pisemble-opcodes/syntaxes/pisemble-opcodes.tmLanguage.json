@@ -42,7 +42,7 @@
       ]
     },
     "opcode": {
-      "match": "(?<=^|[\\s{(\\[])(?:b\\.(?:eq|ne|cs|cc|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)|add|adds|adr|and|asr|b|bl|blr|br|brk|cbz|cbnz|clz|cmn|cmp|csel|csinc|cset|dmb|dsb|eor|eret|hlt|hvc|isb|ldp|ldr|ldrh|ldrb|ldur|ldurb|ldurh|lsl|lsr|mov|movk|movn|movz|mrs|msr|mul|neg|nop|orr|rbit|rev16|ret|scvtf|sdiv|sev|smc|stp|str|strb|strh|stur|sub|subs|svc|sxtb|sxth|sxtw|tst|udiv|wfe|wfi|fabs|fadd|fcmp|fcvtzs|fdiv|fmov|fmul|fneg|fsqrt|fsub)(?=$|[\\s})\\]])",
+      "match": "(?<=^|[\\s{(\\[])(?:b\\.(?:eq|ne|cs|cc|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)|adc|add|adds|adr|and|ands|asr|b|bfi|bic|bics|bl|blr|br|brk|cbz|cbnz|ccmp|cinc|clz|cmn|cmp|cneg|csel|csinc|csinv|csneg|cset|dmb|dsb|eor|eret|extr|hlt|hvc|isb|ldar|ldaxr|ldp|ldr|ldrh|ldrb|ldrsb|ldrsh|ldrsw|ldur|ldurb|ldurh|ldxr|lsl|lsr|madd|mneg|mov|movk|movn|movz|mrs|msr|msub|mul|neg|nop|orn|orr|prfm|rbit|rev16|ret|ror|sbc|sbfm|sbfx|scvtf|sdiv|sev|smc|smull|smulh|stlr|stlxr|stp|str|strb|strh|stur|stxr|sub|subs|svc|sxtb|sxth|sxtw|tst|ubfm|ubfx|udiv|umull|umulh|uxtb|uxth|wfe|wfi|fabs|fadd|fcmp|fcvtzs|fdiv|fmov|fmul|fneg|fsqrt|fsub)(?=$|[\\s})\\]])",
       "name": "keyword.other.opcode.pisemble"
     },
     "label-definition": {
