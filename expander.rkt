@@ -1268,6 +1268,12 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'reg-reg `rt.is32 (list `rt.regnum `rm.regnum) '() #f))]
+   ; ror x0 x1 #n is extr x0 x1 x1 #n. This must come before the generic immediate clause below.
+   [(_ (~optional label:label) (~datum ror) rt:register rn:register #:immediate n)
+     #:when (eq? (syntax-e #'rt.is32) (syntax-e #'rn.is32))
+     #'(begin
+         (~? (try-set-jump-source `label set-jump-source-current))
+         (write-instruction 'extr 'reg-reg-reg-imm `rt.is32 (list `rt.regnum `rn.regnum `rn.regnum) (list n) #f))]
    ; sub x1 x2 @12
    [(_ (~optional label:label) oc:opcode rt:register rn:register #:immediate n)
     #'(begin
@@ -1429,7 +1435,6 @@
      #'(begin
          (~? (try-set-jump-source `label set-jump-source-current))
          (write-instruction 'extr 'reg-reg-reg-imm `rt.is32 (list `rt.regnum `rn.regnum `rm.regnum) (list lsb) #f))]
-    ; ubfx x0 x1 #lsb #width is ubfm x0 x1 #lsb #(lsb+width-1)
    [(_ (~optional label:label) (~datum ubfx) rt:register rn:register #:immediate lsb #:immediate width)
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
@@ -1640,6 +1645,21 @@
   (set-context-jump-table! prog (make-hash))
   (set-context-branches-waiting! prog (make-hash))
   )
+;; global labels named :Bp-... (from the (breakpoint) macro) become gdb breakpoints.
+;; $image_base is the QEMU -kernel load address; edit it in the file for other layouts.
+(define (write-gdb-breakpoints image-filename)
+  (define gdb-filename (string-append (regexp-replace #rx"[.]img$" image-filename "") ".gdb"))
+  (call-with-output-file gdb-filename #:exists 'replace
+    (λ (out)
+      (fprintf out "# breakpoints for ~a, load with: source ~a\n" image-filename gdb-filename)
+      (fprintf out "set $image_base = 0x80000\n")
+      (for ([entry (obj-file-symbol-table current-obj)])
+        (let ([name (hash-ref (obj-file-string-table current-obj) (car entry))])
+          (when (string-prefix? name ":Bp-")
+            (fprintf out "# ~a\n" (substring name 1))
+            (fprintf out "break *($image_base + 0x~a)\n"
+                     (number->string (cdr entry) 16))))))))
+
 (define-syntax (aarch64 stx)
   (syntax-parse stx
     [(_ filename:string [linkfiles:string ...] a ...)
@@ -1896,7 +1916,8 @@
                    )
                  (wdb "closing")
                  (displayln (format "wrote image file ~a" filename))
-                 (close-output-port out))
+                 (close-output-port out)
+                 (write-gdb-breakpoints filename))
                )
              (begin ; write object file
                (displayln (format "writing object file ~a" filename))

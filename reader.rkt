@@ -103,7 +103,7 @@
          `(arm-line ,@(reverse acc))]
         
         [else
-         (parse-arm-line (cons [read-syntax "" in] acc) paren-count)])))
+         (parse-arm-line (cons [read-syntax src in] acc) paren-count)])))
 
   (define (aux acc)
     (let ([c (peek-char in)])

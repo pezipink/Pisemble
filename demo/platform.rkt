@@ -101,6 +101,20 @@
       (debug-reg reg)
      }])
 
+;; (breakpoint) emits no code. It defines the global label :Bp-<file>-L<line>C<col>, which
+;; the image link writes to <image>.gdb as a gdb breakpoint.
+(define-syntax (breakpoint stx)
+  (syntax-parse stx
+    [(_)
+     (define src (syntax-source stx))
+     (define file-part
+       (if (path-string? src)
+           (let-values ([(base name dir?) (split-path src)])
+             (regexp-replace* #rx"[^A-Za-z0-9]" (regexp-replace #rx"[.][^.]*$" (path->string name) "") "_"))
+           "anon"))
+     (with-syntax ([lbl (datum->syntax stx (string->symbol (format ":Bp-~a-L~aC~a" file-part (syntax-line stx) (syntax-column stx))))])
+       #'(try-set-jump-source 'lbl set-jump-source-current))]))
+
 ;; send-char with its own lowercase literal, so demo.obj has no global references
 (define-syntax-parser local-send-char
   [(_) #'{
