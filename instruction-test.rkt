@@ -201,6 +201,9 @@
  (ldp x1 x2 [sp @-16] !   $E10BFFA9)
  (stp x1 x2 [sp @-16] !   $E10BBFA9)
  (stp x1 x2 [sp] @16      $E10B81A8)
+ (ldp x1 x2 [sp @16]      $E10B41A9)
+ (ldp x1 x2 [sp @-16]     $E10B7FA9)
+ (stp x1 x2 [sp @16]      $E10B01A9)
 
  ;phase 2 shifted register operands
  (add x0 x1 x2 LSL @4     $2010028B)
