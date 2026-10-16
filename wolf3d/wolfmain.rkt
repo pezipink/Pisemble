@@ -3066,7 +3066,7 @@ cbnz x0 loop-
 ; palette (only used for backgroudn colours)
 :palette
 (let*
-    ([lines  (file->lines "wolfpal.inc")]
+    ([lines  (file->lines "wolf3d/wolfpal.inc")]
      [splits  (map (λ (line) (string-split line "RGB")) lines)]
      [clean  (map (λ (line) (string-replace (string-replace line ")" "") "(" "")) (flatten splits))]
      [rgbs (map (λ (line) (string-split line ",")) clean)])

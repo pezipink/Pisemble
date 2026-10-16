@@ -3,7 +3,8 @@
 ;; PLATFORM - everything that isn't your graphics code (QEMU raspi3b, EL2)
 ;; =====================================================================
 ;; Boots core 0, brings up the mini UART, asks the GPU for a double-height
-;; 32 bit framebuffer, turns on the MMU and caches, then runs the frame loop:
+;; 32 bit (or 8 bit palette) framebuffer, turns on the MMU and caches, then
+;; runs the frame loop:
 ;;
 ;;     Demo-init                       once
 ;;     loop:  Draw-frame  x0 = back page, x1 = frame number
@@ -13,8 +14,10 @@
 ;; Usage, in your demo file:
 ;;     (require "platform.rkt")
 ;;     (demo { ...code and data, defining Demo-init and Draw-frame... })
+;;     (demo #:bpp 8 { ... })    for 8 bit palette mode: 1 byte per pixel
 ;; (demo ...) assembles your code into demo.obj, then builds kernel8.img from
 ;; this platform code + demo.obj. Both go to the current directory.
+;; ROW-BYTES and PAGE-BYTES follow the chosen depth.
 ;;
 ;; Rules for demo code:
 ;;  * Demo-init and Draw-frame may use x0-x28 freely.
@@ -24,8 +27,9 @@
 ;;  * demo.obj is linked at a 4KB boundary, so /= up to $1000 works as expected.
 ;;
 ;; Also assembled into demo.obj for you (lowercase, call with bl):
-;;     clear-screen   x0 = page, w1 = colour
+;;     clear-screen   x0 = page, w1 = colour (palette index in 8 bit mode)
 ;;     fill-rect      x0 = page, x1 = x, x2 = y, x3 = w, x4 = h, w5 = colour
+;;     set-palette    x0 = first index, x1 = count, x2 = address of rgb words
 ;;     send-char      so debug-str / debug-reg / debug-str-reg work
 ;; All preserve registers.
 ;;
@@ -43,10 +47,17 @@
 (define width 320)
 (define height 200)
 (define FPS 60)
+;; bits per pixel: 32 (direct colour) or 8 (palette). Set with (demo #:bpp 8 ...).
+(define BPP 32)
 (define ROW-BYTES (* width 4))
 (define PAGE-BYTES (* width height 4))
+(define (set-bpp! n)
+  (unless (memv n '(8 32)) (error "bpp must be 8 or 32, got" n))
+  (set! BPP n)
+  (set! ROW-BYTES (* width (quotient n 8)))
+  (set! PAGE-BYTES (* ROW-BYTES height)))
 
-;; 32 bit pixel. The framebuffer is set to RGB order, so red is the low byte.
+;; 32 bit pixel, or a palette entry in 8 bit mode. RGB order, so red is the low byte.
 (define (rgb r g b)
   (+ #xFF000000 (arithmetic-shift b 16) (arithmetic-shift g 8) r))
 
@@ -110,9 +121,16 @@
 ;; =====================================================================
 (define-syntax-parser gfx-library
   [(_) #'{
-; x0 = page, w1 = colour
+; x0 = page, w1 = colour (palette index in 8 bit mode)
 (subr clear-screen ([vptr x0] [colour w1]) [x0 x1 x2 x3] {
   mov w3 colour
+  (when (= BPP 8)
+    { mov x2 @$FF
+      and x3 x3 x2
+      lsl x2 x3 @8
+      orr x3 x3 x2
+      lsl x2 x3 @16
+      orr x3 x3 x2 })
   lsl x2 x3 @32
   orr x3 x3 x2
   (load-immediate x2 (quotient PAGE-BYTES 64))
@@ -134,13 +152,15 @@
   (load-immediate pitch ROW-BYTES)
   mul py py pitch
   add vptr vptr py
-  lsl px px @2
+  (when (= BPP 32) { lsl px px @2 })
   add vptr vptr px
   (/whilenz rh {
     mov row vptr
     mov cnt rw
     (/whilenz cnt {
-      str colour [row] @4
+      (if (= BPP 8)
+          { strb w5 [x8] @1 }
+          { str w5 [x8] @4 })
       sub cnt cnt @1
     })
     add vptr vptr pitch
@@ -148,15 +168,90 @@
   })
 })
 
+; 8 bit mode: load palette entries.  x0 = first index, x1 = count (1-256),
+; x2 = address of count 32 bit colours made with rgb.
+(subr set-palette ([first x0] [count x1] [src x2] [msg x3] [dst x4] [n x6]) [x0 x1 x2 x3 x4 x5 x6 x8] {
+  adr msg palette-msg:
+  mov w5 @0
+  str w5 [msg @4]               ; the GPU overwrites these with its response
+  str w5 [msg @16]
+  str w0 [msg @20]
+  str w1 [msg @24]
+  add dst msg @28
+  mov n count
+:copy
+  ldr w5 [x2] @4
+  str w5 [x4] @4
+  sub n n @1
+  cbnz n copy-
+  mov x8 msg
+  bl send-vcore-msg:
+})
+
+(mailbox-routine)
 (local-send-char)
+
+/= 16
+:palette-msg
+  (write-value-32 (* 264 4))
+  (write-value-32 0)
+  (write-value-32 $4800B)       ; set palette
+  (write-value-32 (* 258 4))
+  (write-value-32 0)
+  (write-value-32 0)            ; first index
+  (write-value-32 0)            ; count
+  (reserve (* 256 4))           ; colours
+  (write-value-32 0)            ; end tag
+  }])
+
+;; send-vcore-msg: x8 = 16 byte aligned property message.  Used by the platform
+;; and by set-palette.  Cleans the whole message from the cache first.
+(define-syntax-parser mailbox-routine
+  [(_) #'{
+(subr send-vcore-msg () [x0 x1 x2 x3 x8] {
+     mov x0 x8
+     ldr w1 [x8 @0]              ; message size
+     add x1 x8 x1
+:clean
+     (write-value-32 $d50b7e20)  ; dc civac, x0
+     add x0 x0 @64
+     cmp x0 x1
+     b.cc clean-
+     (write-value-32 $d5033f9f)  ; dsb sy
+     ldr x0 vc-mbox:
+:wait
+     ldr w1 (x0 @$18)            ; status
+     mov x2 @1
+     lsl x2 x2 @31               ; full
+     and x1 x1 x2
+     cbnz x1 wait-
+     mov x2 x8
+     mov x3 @8                   ; property channel
+     orr x2 x2 x3
+     str w2 (x0 @$20)            ; write
+:wait
+     ldr w1 (x0 @$18)
+     mov x2 @1
+     lsl x2 x2 @30               ; empty
+     and x1 x1 x2
+     cbnz x1 wait-
+     ldr w1 (x0 @$0)             ; read
+     mov x2 @%1111
+     and x1 x1 x2
+     sub x1 x1 @8
+     cbnz x1 wait-
+})
+/= 8
+:vc-mbox (write-value-64 (+ PERIPH-BASE $00B880))
   }])
 
 ;; =====================================================================
 ;; the demo wrapper
 ;; =====================================================================
 (define-syntax-parser demo
-  [(_ body ...)
+  [(_ (~optional (~seq #:bpp bpp:expr) #:defaults ([bpp #'32])) body ...)
    #'(begin
+       (set-bpp! bpp)
        (aarch64 "demo.obj" [] body ... { (gfx-library) })
        (platform-image))])
 
@@ -224,11 +319,6 @@
 ;; =====================================================================
 (define-syntax-parser platform-image
   [(_) #'(aarch64 "kernel8.img" ["demo.obj"] {
-
-     mbox-read = $0
-     mbox-status = $18
-     mbox-write = $20
-     mbox-ch-prop = $8
 
      ; only core 0 runs
      mrs x0 mpidr_el1
@@ -343,34 +433,7 @@
   str x1 [x3]
 })
 
-; x8 = 16 byte aligned property message
-(subr send-vcore-msg () [x0 x1 x2 x3 x8] {
-     mov x0 x8
-     (write-value-32 $d50b7e20)  ; dc civac, x0
-     (write-value-32 $d5033f9f)  ; dsb sy
-     ldr x0 vc-mbox:
-:wait
-     ldr w1 (x0 @mbox-status)
-     mov x2 @1
-     lsl x2 x2 @31               ; full
-     and x1 x1 x2
-     cbnz x1 wait-
-     mov x2 x8
-     mov x3 @mbox-ch-prop
-     orr x2 x2 x3
-     str w2 (x0 @mbox-write)
-:wait
-     ldr w1 (x0 @mbox-status)
-     mov x2 @1
-     lsl x2 x2 @30               ; empty
-     and x1 x1 x2
-     cbnz x1 wait-
-     ldr w1 (x0 @mbox-read)
-     mov x2 @%1111
-     and x1 x1 x2
-     sub x1 x1 @mbox-ch-prop
-     cbnz x1 wait-
-})
+(mailbox-routine)
 
 ;; ---------------------------------------------------------------------
 ;; faults: print vector number, ESR, ELR, FAR, then disassemble from ELR
@@ -425,7 +488,6 @@
 ;; ---------------------------------------------------------------------
 /= 8
 (periph-addresses)
-:vc-mbox     (write-value-64 (+ PERIPH-BASE $00B880))
 :stack-top   (write-value-64 $80000)
 :bus-mask    (write-value-64 $3FFFFFFF)
 :page-bytes  (write-value-64 PAGE-BYTES)
@@ -456,7 +518,7 @@
       (write-value-32 $48005)   ; depth
       (write-value-32 4)
       (write-value-32 4)
-      (write-value-32 32)
+      (write-value-32 BPP)
       (write-value-32 $48006)   ; pixel order: 1 = RGB
       (write-value-32 4)
       (write-value-32 4)

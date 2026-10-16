@@ -161,6 +161,8 @@
 
     (init-uart)
     (debug-str "uart up" #t)
+    (write-value-32 $d5384240) 
+    (debug-reg x0)
     (setup-mmu)
     (debug-str "mnu up" #t)
     

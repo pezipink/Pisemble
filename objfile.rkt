@@ -275,18 +275,19 @@
          (obj-file-data merge-obj))]
 
 
-       ; update the symbol table - skipping any symbols already defined
-       ; in the core-obj. we can use the string index since they were updated 
+       ; update the symbol table - a global defined in both objects is an error.
+       ; we can use the string index since they were updated 
        [symbol-table
         (let*
-            ([indexes (for/hash ([x (obj-file-symbol-table core-obj)]) (values x #t))]
+            ([indexes (for/hash ([x (obj-file-symbol-table core-obj)]) (values (car x) #t))]
              [new-items
               (for/fold
                   ([new-items '()])
                   ([x (obj-file-symbol-table merge-obj)])
                 (match-let ([(cons k v) x])
                   (if (hash-has-key? indexes k)
-                      new-items
+                      (error (format "could not link as the global symbol ~a is defined in more than one object"
+                                     (hash-ref new-strings k)))
                       ; apply the new offset to the symbol location
                       (cons  (cons k (+ merge-data-offset v)) new-items))))]
              [new-items

@@ -270,18 +270,18 @@
     (init-uart)
     (debug-str "init irq vector" #t)
     bl irq-vector-init:
-;    (debug-str "init timer " #t)
+    (debug-str "init timer " #t)
     bl timer-init:
-;    (debug-str "init ic" #t)
+    (debug-str "init ic" #t)
     bl enable-interrupt-controller:
 ;    (debug-str "enable irq" #t)
 ;    bl enable-irq:
   ldr x0 SMICS:
   mov x1 @0
   str w1 (x0 @0)
-    ; bl dump-regs:     
-;     (debug-str "HELLO WORLD!")
- ;    (debug-str "BAREMETAL RPI4 MEETS RACKETLANG!")
+     bl dump-regs:     
+     (debug-str "HELLO WORLD!" #t)
+     (debug-str "BAREMETAL RPI4 MEETS RACKETLANG!" #t)
      ;(debug-str "heres a number" #t)
      mov x0 @$BAD
      lsl x0 x0 @16
