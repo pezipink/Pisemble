@@ -292,6 +292,8 @@
  (fmsub s4 s5 s6 s7       $A49C061F)
  (fnmadd s0 s1 s2 s3      $200C221F)
  (fnmsub s0 s1 s2 s3      $208C221F)
+ (fcsel s0 s1 s2 eq       $200C221E)
+ (fcsel s3 s4 s5 gt       $83CC251E)
  (add x0 x1 w2 UXTB          $2000228B)
  (add x0 x1 w2 SXTW @2        $20C8228B)
  (sub w0 w1 w2 UXTW           $2040224B)

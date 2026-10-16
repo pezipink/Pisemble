@@ -743,6 +743,7 @@
     ['fsub   'fp-fp-fp       'rm-rn-rd        #x1E203800 #f #f]
     ['fmax   'fp-fp-fp       'rm-rn-rd        #x1E204800 #f #f]
     ['fmin   'fp-fp-fp       'rm-rn-rd        #x1E205800 #f #f]
+    ['fcsel  'fp-fp-fp-cond  'rm-cond-rn-rd   #x1E200C00 #f #f]
     ['fmadd  'fp-fp-fp-fp    'rm-ra-rn-rd     #x1F000000 #f #f]
     ['fmsub  'fp-fp-fp-fp    'rm-ra-rn-rd     #x1F008000 #f #f]
     ['fnmadd 'fp-fp-fp-fp    'rm-ra-rn-rd     #x1F200000 #f #f]
@@ -1134,7 +1135,7 @@
                      (list 'add 'adr 'and 'asr 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
                            'bl 'cbz 'cbnz 'csel 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'nop
                            'orr 'ret 'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'sxtb 'sxth 'sxtw 'udiv 'wfe
-                           'fabs 'fadd 'fcmp 'fcvtzs 'fcvtzu 'fdiv 'fmov 'fmul 'fneg 'fsqrt 'fsub 'fmax 'fmin 'fmadd 'fmsub 'fnmadd 'fnmsub 'ucvtf
+                           'fabs 'fadd 'fcmp 'fcvtzs 'fcvtzu 'fdiv 'fmov 'fmul 'fneg 'fsqrt 'fsub 'fmax 'fmin 'fmadd 'fmsub 'fnmadd 'fnmsub 'ucvtf 'fcsel
                            'adds 'subs 'cmn 'tst 'ands 'sdiv 'movn 'csinc 'cset 'br 'blr 'clz 'rbit 'rev16
                            'ldur 'ldurb 'ldurh 'svc 'hvc 'smc 'brk 'hlt 'dmb 'dsb 'isb 'wfi 'sev
                            'madd 'msub 'ror 'ubfm 'sbfm 'ldrsw 'ldrsb 'ldrsh 'csinv 'csneg 'bic 'bics 'orn 'adc 'sbc))]
@@ -1188,7 +1189,7 @@
       rbit rev16 rev32 ret ror sbc sbfm sbfx scvtf sdiv sev smc smull smulh stlr stlxr
       stp str strb strh stur stxr sub subs svc sxtb sxth sxtw tst ubfm ubfx udiv
       umull umulh uxtb uxth wfe wfi fabs fadd fcmp fcvtzs fdiv fmov fmul fneg
-      fsqrt fsub fcvtzu fmax fmin fmadd fmsub fnmadd fnmsub ucvtf)))
+      fsqrt fsub fcvtzu fmax fmin fmadd fmsub fnmadd fnmsub ucvtf fcsel)))
 
 (define-syntax (arm-line stx)
 ;  (writeln stx)
@@ -1587,6 +1588,11 @@
     #'(begin
         (~? (try-set-jump-source `label set-jump-source-current))
         (write-instruction 'oc 'fp-fp-fp #f (list `rd.regnum `rn.regnum `rm.regnum) '() #f))]
+   ; fcsel s0 s1 s2 eq
+   [(_ (~optional label:label) (~datum fcsel) rd:fpu-register rn:fpu-register rm:fpu-register cond:condition)
+    #'(begin
+        (~? (try-set-jump-source `label set-jump-source-current))
+        (write-instruction 'fcsel 'fp-fp-fp-cond #f (list `rd.regnum `rn.regnum `rm.regnum `cond.condnum) '() #f))]
    ; fmadd s0 s1 s2 s3 (fmsub, fnmadd and fnmsub take the same operands)
    [(_ (~optional label:label) oc:opcode rd:fpu-register rn:fpu-register rm:fpu-register ra:fpu-register)
     #:when (memq (syntax-e #'oc) '(fmadd fmsub fnmadd fnmsub))
