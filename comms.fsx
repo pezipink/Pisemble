@@ -1,17 +1,38 @@
-﻿#r @"C:\Users\juan\.nuget\packages\system.memory\4.5.5\lib\net461\System.Memory.dll"
+﻿
+
+//#r @"C:\Users\juan\.nuget\packages\system.memory\4.5.5\lib\net461\System.Memory.dll"
 #r @"C:\repos\Disarm\Disarm\bin\Debug\netstandard2.0\Disarm.dll"
 
 open System
 open System.IO
-open System.IO.Ports
+//open System.IO.Ports
 
 open Disarm
 
 //Disassembler.Disassemble(ResizeArray [| 0xa0630158u|], uint64 0)
 //Disassembler.Disassemble(ResizeArray [| 0x580163A0u|], uint64 0)
 
-let port = new SerialPort("COM6",115200,Parity.None, 8, StopBits.One)
-port.Open()
+// let port = new SerialPort("COM6",115200,Parity.None, 8, StopBits.One)
+// port.Open()
+open System.Net.Sockets
+
+type TcpPort(host: string, p: int) =
+    let client = new TcpClient(host, p)
+    let stream = client.GetStream()
+    member _.ReadTimeout with set (ms: int) = stream.ReadTimeout <- ms
+    member _.ReadByte() : int =
+        try
+            let b = stream.ReadByte()
+            if b < 0 then
+                printfn "## connection closed"
+                exit 0
+            b
+        with
+        | :? IOException as e when (e.InnerException :? SocketException) ->
+            raise (TimeoutException())   // so your existing handler resets to Waiting
+    member this.ReadChar() : int = this.ReadByte()
+
+let port = TcpPort("127.0.0.1", 5555)
 
 // in a waiting state, the next byte received determines the state to switch 
 // to and in turn what to expect next.
@@ -21,6 +42,7 @@ type StateCode =
     | Number32 = 2
     | Number64 = 3
     | Disassemble = 4
+    | Timing = 5
 
 type State = 
     | Waiting
@@ -28,6 +50,7 @@ type State =
     | Number32 // 32bit number
     | Number64 
     | Disassemble // memory location followed by 32bit instructions
+    | Timing // null terminated label, bytes u64, ticks u64, timer frequency u64
     
 port.ReadTimeout <- 135000
 let mutable state = Waiting
@@ -72,6 +95,8 @@ while true do
             elif b = (int)StateCode.Disassemble then 
                 printfn "Disassemble incoming"
                 state <- Disassemble
+            elif b = (int)StateCode.Timing then 
+                state <- Timing
 
             else 
                 //printfn $"unknown state code {b}"
@@ -120,6 +145,24 @@ while true do
             let disass = Disarm.Disassembler.Disassemble(ResizeArray code, startLocation, true, true, false);
             for ins in disass.Instructions do
                 printfn $"{ins.ToString()}"
+            state <- Waiting
+        | Timing ->
+            let label = new ResizeArray<char>()
+            let mutable c = char(port.ReadChar())
+            while c <> (char 0x0) do
+                label.Add c
+                c <- char(port.ReadChar())
+            let bytes = read64()
+            let ticks = read64()
+            let freq = read64()
+            let name = (new String(label.ToArray())).PadRight(22)
+            if ticks = 0UL || freq = 0UL then
+                printfn $"{name} {bytes,10} B  ticks {ticks} freq {freq} (can't compute)"
+            else
+                let secs = float ticks / float freq
+                let mbs = float bytes / secs / (1024.0 * 1024.0)
+                let nsPerByte = secs * 1e9 / float bytes
+                printfn $"{name} {bytes,10} B  {secs * 1e3,9:F3} ms  {mbs,9:F1} MB/s  {nsPerByte,7:F3} ns/B"
             state <- Waiting
             
     with

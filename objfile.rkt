@@ -226,10 +226,11 @@
 (define (append-data-aligned existing-data new-data)
   (define current-count (vector-length existing-data))
   (define (aux i)
-    (if (eq? (remainder i 16) 0)
+    (if (eq? (remainder i #x1000) 0)
         i
         (aux (+ i 1))))
-  ;we only append new blocks 16 byte aligned
+  ;we append new blocks 4KB aligned, so /= up to 4KB (vectors, page tables)
+  ;inside an object stays correct once linked
   (define new-start (aux current-count))
   (define total-length (+ new-start (vector-length new-data)))
   (define vec (make-vector total-length))
