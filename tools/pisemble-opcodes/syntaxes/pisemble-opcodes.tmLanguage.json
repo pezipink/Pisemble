@@ -42,7 +42,7 @@
       ]
     },
     "opcode": {
-      "match": "(?<=^|[\\s{(\\[])(?:b\\.(?:eq|ne|cs|cc|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)|adc|add|adds|adr|and|ands|asr|b|bfi|bic|bics|bl|blr|br|brk|cbz|cbnz|ccmp|cinc|clz|cmn|cmp|cneg|csel|csinc|csinv|csneg|cset|dmb|dsb|eor|eret|extr|hlt|      hvc|isb|ldar|ldaxr|ldp|ldr|ldrh|ldrb|ldrsb|ldrsh|ldrsw|ldur|ldurb|ldurh|ldursb|ldursh|ldursw|ldxr|lsl|lsr|madd|mneg|mov|movk|movn|movz|mrs|msr|msub|mul|mvn|neg|nop|orn|orr|prfm|rbit|rev16|rev32|ret|ror|sbc|sbfm|sbfx|scvtf|sdiv|sev|smc|smull|smulh|stlr|stlxr|stp|str|strb|strh|stur|stxr|sub|subs|svc|sxtb|sxth|sxtw|tst|ubfm|ubfx|udiv|umull|umulh|uxtb|uxth|wfe|wfi|fabs|fadd|fcmp|fcvtzs|fdiv|fmov|fmul|fneg|fsqrt|fsub)(?=$|[\\s})\\]])",      "name": "keyword.other.opcode.pisemble"
+      "match": "(?<=^|[\\s{(\\[])(?:b\\.(?:eq|ne|cs|cc|mi|pl|vs|vc|hi|ls|ge|lt|gt|le|al)|adc|add|adds|adr|and|ands|asr|b|bfi|bic|bics|bl|blr|br|brk|cbz|cbnz|ccmp|cinc|clz|cmn|cmp|cneg|csel|csinc|csinv|csneg|cset|dmb|dsb|eor|eret|extr|hlt|hvc|isb|ldar|ldaxr|ldp|ldr|ldrh|ldrb|ldrsb|ldrsh|ldrsw|ldur|ldurb|ldurh|ldursb|ldursh|ldursw|ldxr|lsl|lsr|madd|mneg|mov|movk|movn|movz|mrs|msr|msub|mul|mvn|neg|nop|orn|orr|prfm|rbit|rev16|rev32|ret|ror|sbc|sbfm|sbfx|scvtf|sdiv|sev|smc|smull|smulh|stlr|stlxr|stp|str|strb|strh|stur|stxr|sub|subs|svc|sxtb|sxth|sxtw|tst|ubfm|ubfx|udiv|umull|umulh|uxtb|uxth|wfe|wfi|fabs|fadd|fcmp|fcvtzs|fcvtzu|fdiv|fmadd|fmax|fmin|fmov|fmsub|fmul|fneg|fnmadd|fnmsub|fsqrt|fsub|ucvtf)(?=$|[\\s})\\]])",      "name": "keyword.other.opcode.pisemble"
     },
     "label-definition": {
       "match": "(?<=^|[\\s(\\[{]):[A-Za-z_][\\w!?.\\-]*(?=$|[\\s()\\[\\]{}])",
