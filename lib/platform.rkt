@@ -172,10 +172,10 @@
   add vptr vptr py
   (when (= BPP 32) { lsl px px @2 })
   add vptr vptr px
-  (/whilenz rh {
+  (/do-whilenz rh {
     mov row vptr
     mov cnt rw
-    (/whilenz cnt {
+    (/do-whilenz cnt {
       (if (= BPP 8)
           { strb w5 [x8] @1 }
           { str w5 [x8] @4 })
@@ -492,7 +492,7 @@
       { lsr x0 x0 @8
         bl send-char: })
     lsr instruction-count instruction-count @1
-    (/whilenz instruction-count {
+    (/do-whilenz instruction-count {
       ldr x0 [x1] @8
       bl send-char:
       (for ([_ (in-range 7)])

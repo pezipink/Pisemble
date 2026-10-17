@@ -1,7 +1,8 @@
 #lang pisemble
 (require (for-syntax syntax/parse racket/stxparam racket/syntax))
 (require syntax/parse/define)
-(provide  /cond /if /when /for /whilenz /whilez /while)
+(provide  /cond /if /when /for /whilenz /whilez /while
+          /do-whilenz /do-whilez /do-while)
 
 (begin-for-syntax
   (define labels (make-hash))
@@ -218,25 +219,43 @@
 ; //////
 
 
-(define-syntax-parser /for ; note this won't work for a loop that runs 0 times
+; the test is at the top, so the body may run 0 times
+(define-syntax-parser /for
   [(_ initializer:expr condition:expr update:expr body:expr)
    (let ([loop-start (gen-label "for-start")]
-         [loop-end (gen-label "for-end")])
+         [test-start (gen-label "for-test")])
+     (with-syntax
+       ([start-label (format-label loop-start)]
+        [start-target (format-target loop-start '-)]
+        [test-label (format-label test-start)]
+        [test-target (format-target test-start '+)])
+        #'{initializer
+           b test-target
+         start-label
+           body
+           update
+         test-label
+           (compile-condition condition start-target)
+           }))])
+
+(define-syntax-parser /whilenz
+  [(_ test-register:register body)
+   (let ([loop-start (gen-label "whilenz-start")]
+         [loop-end (gen-label "whilenz-end")])
      (with-syntax
        ([start-label (format-label loop-start)]
         [start-target (format-target loop-start '-)]
         [end-label (format-label loop-end)]
-        [end-target (format-target loop-end '+)]
-        )
-        #'{initializer
+        [end-target (format-target loop-end '+)])
+        #'{
          start-label
+           cbz test-register end-target
            body
-           update
-           (/when condition {b start-target})
+           b start-target
          end-label
            }))])
 
-(define-syntax-parser /whilenz
+(define-syntax-parser /do-whilenz
   [(_ test-register:register body)
    (let ([loop-start (gen-label "whilenz-start")])
      (with-syntax
@@ -249,6 +268,23 @@
 
 (define-syntax-parser /whilez
   [(_ test-register:register body)
+   (let ([loop-start (gen-label "whilez-start")]
+         [loop-end (gen-label "whilez-end")])
+     (with-syntax
+       ([start-label (format-label loop-start)]
+        [start-target (format-target loop-start '-)]
+        [end-label (format-label loop-end)]
+        [end-target (format-target loop-end '+)])
+        #'{
+         start-label
+           cbnz test-register end-target
+           body
+           b start-target
+         end-label
+           }))])
+
+(define-syntax-parser /do-whilez
+  [(_ test-register:register body)
    (let ([loop-start (gen-label "whilez-start")])
      (with-syntax
        ([start-label (format-label loop-start)]
@@ -259,7 +295,27 @@
            cbz test-register start-target
            }))])
 
+; the test is at the top, so the body may run 0 times.
+; The first branch jumps to the test, which loops back while the condition holds.
 (define-syntax-parser /while
+  [(_ condition body)
+   (let ([loop-start (gen-label "while-start")]
+         [test-start (gen-label "while-test")])
+     (with-syntax
+       ([start-label (format-label loop-start)]
+        [start-target (format-target loop-start '-)]
+        [test-label (format-label test-start)]
+        [test-target (format-target test-start '+)])
+        #'{
+           b test-target
+         start-label
+           body
+         test-label
+           (compile-condition condition start-target)
+          }))])
+
+; the test is at the bottom, so the body always runs at least once
+(define-syntax-parser /do-while
   [(_ condition body)
    (let ([loop-start (gen-label "while-start")])
      (with-syntax
@@ -268,5 +324,5 @@
         #'{
          start-label
            body
-           (/when condition {b start-target})
+           (compile-condition condition start-target)
           }))])

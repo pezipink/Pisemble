@@ -59,7 +59,7 @@ Read the file that matches your task before editing:
 2. A plain reference `name:` errors if more than one label with that name exists in the program. Use `name+` (nearest forward) or `name-` (nearest backward) for repeated local labels such as `:loop`.
 3. There are no logical immediates (`and x0 x0 @255` does not exist) and no register-offset addressing (`ldr x0 [x1 x2]`). Put the mask or offset in a register first.
 4. `mrs`/`msr` only know a handful of system registers. Emit others with `(write-value-32 opcode)`. See the opcode table in [language.md](agent-context/language.md).
-5. `/whilenz` and `/whilez` test at the bottom, so the body always runs at least once.
+5. `/whilenz`, `/whilez`, `/while` and `/for` test before the body, so the body can run zero times. Use `/do-whilenz`, `/do-whilez`, `/do-while` when the body must run at least once.
 6. QEMU `-kernel` enters at EL2, not EL1. Use EL2 system registers.
 7. Instruction-level problems usually show up as a silent hang or black screen. Use the QEMU monitor (`info registers`, `x /20i $pc`, `screendump`) rather than guessing; see [qemu-and-debugging.md](agent-context/qemu-and-debugging.md).
 8. There is no incremental build. Building a demo always reassembles `demo.obj` and relinks `kernel8.img`.

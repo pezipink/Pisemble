@@ -176,10 +176,11 @@ These are ordinary `#lang pisemble` modules. Require them by relative path.
 Conditions are written `(x0 lt x1)` or `(x0 ge @10)` using the condition names `eq ne cs cc mi pl vs vc hi ls ge lt gt le al`, and can be combined with `(/and c ...)` and `(/or c ...)`.
 
 * `(/if cond then else)`, `(/when cond then)`, `(/cond ([cond expr] ... [else expr]))`
-* `(/whilenz reg body)`, `(/whilez reg body)`, `(/while cond body)`, `(/for init cond update body)`
+* `(/whilenz reg body)`, `(/whilez reg body)`, `(/while cond body)`, `(/for init cond update body)`: test before the body, so the body can run zero times.
+* `(/do-whilenz reg body)`, `(/do-whilez reg body)`, `(/do-while cond body)`: test after the body, so the body always runs at least once.
 
-> [!WARNING]
-> All the loop macros test at the bottom, so the body always runs at least once. `(/whilenz x3 ...)` with `x3 = 0` loops about 2^64 times.
+> [!NOTE]
+> The loop macros changed in this release. `/whilenz`, `/whilez`, `/while` and `/for` used to test at the bottom. Code that depended on the body running once must switch to the `do-` form.
 
 The macros generate labels like `:then-start_0` and branch to them with `+` and `-` references. The counter lives in the module being compiled, so the same generated name can appear in code expanded from another module. Relative references usually still pick the right label, but deeply nested control flow expanded from another module's macro is a place to look if a branch goes somewhere odd.
 

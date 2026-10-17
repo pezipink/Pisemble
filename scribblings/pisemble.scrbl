@@ -28,7 +28,9 @@ ones it uses explicitly:
    register renaming with @racket[regs], and @racket[subr] and @racket[preserve].}
  @item{@litchar{pisemble/lib/struct}: @racket[load-immediate] and @racket[/struct].}
  @item{@litchar{pisemble/lib/expr}: structured control flow such as
-   @racket[/if], @racket[/when], @racket[/cond], @racket[/whilenz] and @racket[/while].}
+   @racket[/if], @racket[/when], @racket[/cond], @racket[/whilenz] and @racket[/while].
+   Loops test before the body. The @racket[/do-whilenz], @racket[/do-while] and
+   similar forms test after it, so the body always runs at least once.}
  @item{@litchar{pisemble/lib/periph}: UART helpers, including
    @racket[init-uart], @racket[debug-str] and @racket[create-send-char].}
 ]
