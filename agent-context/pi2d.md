@@ -12,6 +12,8 @@ ms.date: 2026-10-17
 * `examples/cycle.rkt` is an 8 bit example. It draws a pattern once, then animates by rotating the palette every frame.
 * `examples/bouncing.rkt` is a 32 bit animation with three bouncing balls. Each ball is a filled circle drawn as horizontal spans, and its position is computed from the frame counter.
 * `examples/stars3d.rkt` is a minimal 32 bit 3D starfield. Each star's depth comes from the frame counter, and its screen offset is a perspective divide (`offset * 64 / z`).
+* `examples/mandelbrot.rkt` is a single precision Mandelbrot zoom. Racket precomputes a 512 frame table of pixel origin and step, and the render loop iterates `z = z*z + c` up to 64 times per pixel. Keep the zoom centre on the boundary (Seahorse Valley). A centre inside the set renders solid black at this iteration limit.
+* `examples/l-system.rkt` draws a 5 generation plant from `X -> F+[[X]-X]-F[-FX]+X` and `F -> FF`. Racket expands the rules, runs a turtle to fit the plant to the window, and precomputes step vectors for 1024 headings plus a sway table. Each frame replays the first `min(frame * rate, total)` commands, using PUSH/POP for branches. The library calls (`clear-screen`, `fill-rect`) overwrite `x0`-`x3`, so the command count is kept on the stack across them.
 * `examples/rings.rkt` is a 1024x768 example. It uses concentric discs, a NEON clear and the barrel shifter.
 
 Build and run from the `examples` folder:
