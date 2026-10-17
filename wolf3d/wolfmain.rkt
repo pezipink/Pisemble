@@ -31,6 +31,15 @@
      TEXTUREFROMFIXEDSHIFT = 4
      MINDIST = $5800
      TEXTURESIZE = (arithmetic-shift 1 6)
+     MOVESPEED = $800   ; fixed point per frame
+     TURNSPEED = 3      ; degrees per frame
+     ; host input byte: one bit per key (bits 4-7 unused)
+     KEY-W = 1
+     KEY-A = 2
+     KEY-S = 4
+     KEY-D = 8
+     AUX-IO = $40
+     AUX-LSR = $54
 
  
 
@@ -68,17 +77,14 @@
 })
 
 ; x0 = back page, x1 = frame number
-(subr Draw-frame ([vptr x0] [wtemp w5] [tptr x8]) [] {
+(subr Draw-frame ([vptr x0]) [] {
+  bl Read-input:
+  bl Update-player:
+
   mov x1 vptr
   (preserve [x4 x8 x9 x10 x14] {
     bl ThreeDRefresh:
   })
-
-  ldr tptr player:
-  (_objstruct/angle-get wtemp tptr)
-  add wtemp wtemp @1
-  (/when (wtemp ge @360) {mov wtemp @0})
-  (_objstruct/angle-set wtemp tptr)
 })
 
 (define-syntax-parser FixedMul
@@ -94,6 +100,83 @@
       add target target x0
       asr target target @16 
      }))
+
+(subr Read-input () [x0 x1 x2] {
+  ; drain the mini uart rx fifo, keeping the newest byte
+  ldr x1 aux-base:
+:input-drain
+  ldr w2 (x1 @AUX-LSR)
+  mov w0 @1
+  and w2 w2 w0            ; data ready?
+  cbz w2 input-done+
+  ldrb w0 [x1 @AUX-IO]
+  adr x2 input-state:
+  str w0 [x2]
+  b input-drain-
+:input-done
+})
+
+; forward is (cos, -sin), the same direction ThreeDRefresh looks along
+(subr Update-player ([ply x1] [inp w2] [angle w3] [tmp w4] [speed x5]
+                     [ptr x8] [off w9])
+      [x0 x1 x2 x3 x4 x5 x6 x7 x8 x9 x10 x11 x12 x13 x14] {
+  adr ptr input-state:
+  ldr inp [ptr]
+  ldr ply player:
+  (_objstruct/angle-get angle ply)
+
+  ; A turns left, D turns right (angle grows to the left)
+  mov tmp @KEY-A
+  and tmp inp tmp
+  (/when (tmp ne @0) {
+    add angle angle @TURNSPEED
+    (/when (angle ge @ANGLES) {sub angle angle @ANGLES})
+  })
+  mov tmp @KEY-D
+  and tmp inp tmp
+  (/when (tmp ne @0) {
+    add angle angle @(- ANGLES TURNSPEED)
+    (/when (angle ge @ANGLES) {sub angle angle @ANGLES})
+  })
+
+  ; W moves forward, S back (both held cancels out)
+  mov speed @0
+  mov tmp @KEY-W
+  and tmp inp tmp
+  (/when (tmp ne @0) {add speed speed @MOVESPEED})
+  mov tmp @KEY-S
+  and tmp inp tmp
+  (/when (tmp ne @0) {sub speed speed @MOVESPEED})
+
+  ; cos = costable[angle], sin = sintable[angle] (4 byte entries, 16.16 fixed)
+  lsl off angle @2
+  ldr ptr costable:
+  add ptr ptr off
+  ldr w6 [ptr]
+  sxtw x6 w6
+  adr ptr sintable:
+  add ptr ptr off
+  ldr w7 [ptr]
+  sxtw x7 w7
+
+  ; dx = speed * cos, dy = -(speed * sin)
+  (FixedMul x10 x5 x6)
+  (FixedMul x11 x5 x7)
+  mov x12 @0
+  sub x11 x12 x11
+
+  ; player->x and player->y are 16.16 fixed, stored as 32 bit
+  (_objstruct/x-get w13 ply)
+  sxtw x13 w13
+  add x13 x13 x10
+  (_objstruct/x-set w13 ply)
+  (_objstruct/y-get w14 ply)
+  sxtw x14 w14
+  add x14 x14 x11
+  (_objstruct/y-set w14 ply)
+
+  (_objstruct/angle-set angle ply)
+})
 
 (subr VgaClearScreen
       ([vptr x1]
@@ -1516,6 +1599,9 @@
 :objlist (reserve (* (sizeof/_objstruct) MAXACTORS))
 /= 8
 :player  (write-value-64 0)  ; objstruct*
+/= 8
+:aux-base (write-value-64 (+ PERIPH-BASE $215000))  ; mini uart registers
+:input-state (write-value-32 0) ; latest button byte from the host (KEY-* bits)
 
 /= 8
 :horizwall
