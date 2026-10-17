@@ -12,7 +12,6 @@
                   #\{ 'terminating-macro read-lbrace
                   #\@ 'terminating-macro read-@
                   #\% 'terminating-macro read-%
-                  #\£ 'terminating-macro read-£
                   #\$ 'terminating-macro read-$
                   ))
 
@@ -33,13 +32,6 @@
      #'#:immediate ]
     [(ch in src line col pos)
      #'#:immediate]))
-
-(define read-£
-  (case-lambda
-    [(ch in)
-     #'#:indirect ]
-    [(ch in src line col pos)
-     #'#:indirect]))
 
 (define read-%
   (case-lambda

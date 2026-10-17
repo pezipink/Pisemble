@@ -19,7 +19,6 @@ Because it is Racket, you can use any Racket code to generate assembly: `define`
 | `$FF`        | Hex number. Underscores are not allowed (the reader stops at the first non-hex character) |
 | `%1010_0001` | Binary number. Underscores are allowed as separators                                      |
 | `;`          | Comment to end of line                                                                    |
-| `£`          | Reads as `#:indirect`, which nothing in the expander currently uses                       |
 
 Inside a block, a line ends at a newline that is outside parentheses. A parenthesised Racket expression on its own line is evaluated as Racket, so `(PUSH x0)`, `(for ...)` and `(write-value-32 ...)` work as lines. Blocks nest: a Racket expression inside a block can contain further `{ }` blocks.
 
