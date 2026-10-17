@@ -97,6 +97,8 @@
  (mul x0 x1 x2        $207C029B)
 
  (csel x0 x1 x2 gt    $20C0829A)
+ (csel x0 x1 x2 hs    $2020829A)
+ (csel x0 x1 x2 lo    $2030829A)
  (csel w0 w1 w2 eq    $2000821A)
  
 

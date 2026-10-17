@@ -1213,7 +1213,7 @@
 
   (define-syntax-class condition
     #:description "condition"
-    #:datum-literals (eq ne cs cc mi pl vs vc hi ls ge lt gt le al)
+    #:datum-literals (eq ne cs hs cc lo mi pl vs vc hi ls ge lt gt le al)
     (pattern eq
              #:with branch-opcode #'b.eq
              #:with branch-inverse-opcode #'b.ne
@@ -1230,6 +1230,14 @@
              #:with branch-opcode #'b.cc
              #:with branch-inverse-opcode #'b.cs
              #:with condnum #b0011) ; Carry clear, C = 0    
+    (pattern hs ; alias of cs
+             #:with branch-opcode #'b.cs
+             #:with branch-inverse-opcode #'b.cc
+             #:with condnum #b0010)
+    (pattern lo ; alias of cc
+             #:with branch-opcode #'b.cc
+             #:with branch-inverse-opcode #'b.cs
+             #:with condnum #b0011)
     (pattern mi
              #:with branch-opcode #'b.mi
              #:with branch-inverse-opcode #'b.pl

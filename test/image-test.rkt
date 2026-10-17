@@ -5,7 +5,7 @@
 
 (define-runtime-path instruction-test "instruction-test.rkt")
 
-(define expected-sha256-prefix "6FC779CD4836497E")
+(define expected-sha256-prefix "1D86135495104C12")
 
 (test-case "instruction-test assembles and links to the expected image"
   (define dir (make-temporary-file "pisemble-test~a" 'directory))
