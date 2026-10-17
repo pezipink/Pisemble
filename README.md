@@ -36,7 +36,8 @@ the ones you need explicitly:
 | `pisemble/lib/struct`    | `load-immediate`, `/struct`                                    |
 | `pisemble/lib/expr`      | Structured control flow: `/if`, `/when`, `/cond`, `/while` ... |
 | `pisemble/lib/periph`    | Peripheral addresses, `init-uart`, `debug-str`                 |
-| `pisemble/lib/platform` | Boot, framebuffer, MMU and frame loop for the demos            |
+| `pisemble/lib/platform` | Boot, framebuffer, MMU and frame loop for the example programs |
+| `pisemble/lib/pi2d`      | `pi2d` form: size and depth, and the `#:init`, `#:update`, `#:render` hooks |
 
 ## A first program
 
@@ -76,10 +77,11 @@ mylang/main
 Programs then start with `#lang mylang`. Because `pisemble/base` is
 `racket/base`, your language gets only the base libraries unless you add more.
 
-## Demos and tests
+## Examples and tests
 
-* [demo/](demo/) contains demos built on the demoscene platform in
-  [lib/platform.rkt](lib/platform.rkt). Run one with `racket demo/plasma.rkt`, then open the image in QEMU.
+* [examples/](examples/) contains example programs built with `pi2d`
+  ([lib/pi2d.rkt](lib/pi2d.rkt)), which sits on the platform in
+  [lib/platform.rkt](lib/platform.rkt). Run one with `racket examples/plasma.rkt`, then open the image in QEMU.
 * [test/](test/) contains the rackunit suite. `raco test test` runs it.
 
 ## Documentation

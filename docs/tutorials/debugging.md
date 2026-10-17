@@ -22,7 +22,7 @@ You need four things:
 * The `ms-vscode.cpptools` extension, if you want to use VS Code.
 * The project notes in [qemu-and-debugging.md](../../agent-context/qemu-and-debugging.md) for the general QEMU setup.
 
-The examples use [bouncing.rkt](../../demo/bouncing.rkt), which already has a breakpoint in it.
+The examples use [bouncing.rkt](../../examples/bouncing.rkt), which already has a breakpoint in it.
 
 > [!NOTE]
 > The paths in this tutorial assume Windows and the install locations above. If you install gdb or QEMU somewhere else, change the paths in `.vscode/tasks.json` and `.vscode/launch.json` to match.
@@ -33,13 +33,13 @@ The assembler has no debugger. It produces a raw binary, and gdb knows nothing a
 
 1. Expansion. `(breakpoint)` expands into a call that defines a global label named after its position in the source, such as `:Bp-bouncing-L17C2`. The label marks the `nop` that the form emits. The `nop` gives the breakpoint line its own address, so `next` can leave that line. Without it, the code of the next line would share the address and gdb would report the whole body as the breakpoint line.
 2. Linking. When you build an image, the linker places every object in the image and resolves each label to an offset from the start of the image.
-3. Writing the gdb file. The image build writes `<name>.gdb` next to `<name>.img`, where `<name>` is the demo's file name, such as `bouncing`. It sets the image base to `0x80000`, which is where QEMU loads a raw AArch64 kernel, and adds one `break` line per label.
+3. Writing the gdb file. The image build writes `<name>.gdb` next to `<name>.img`, where `<name>` is the program's file name, such as `bouncing`. It sets the image base to `0x80000`, which is where QEMU loads a raw AArch64 kernel, and adds one `break` line per label.
 4. Stopping. When gdb connects to QEMU's gdb stub and loads that file, each `break` line sets a breakpoint at `0x80000 + offset`. The CPU stops when it reaches that address.
 
 The generated file for the sample program looks like this:
 
 ```gdb
-# breakpoints for C:\repos\Pisemble\demo\bouncing.img, load with: source C:\repos\Pisemble\demo\bouncing.gdb
+# breakpoints for C:\repos\Pisemble\examples\bouncing.img, load with: source C:\repos\Pisemble\examples\bouncing.gdb
 set $image_base = 0x80000
 # Bp-bouncing-L17C2
 break *($image_base + 0x4004)
@@ -52,13 +52,15 @@ The comment above each `break` line gives the label it came from, so you can mat
 
 ## 2. Adding a breakpoint
 
-Put `(breakpoint)` in a body where a body form is allowed. The sample program uses it as the first form in `Demo-init`:
+Put `(breakpoint)` in a body where a body form is allowed. The sample program uses it as the first form in the `#:init` hook, which the platform runs once at startup as `Pi2d-init`:
 
 ```racket
-(subr Demo-init () [] {
-  (breakpoint)
-  (debug-str "bouncing circles" #t)
-})
+(pi2d
+  #:init () [] {
+    (breakpoint)
+    (debug-str "bouncing circles" #t)
+  }
+  ...)
 ```
 
 The macro is defined in [platform.rkt](../../lib/platform.rkt). You get it when your program requires the platform.
@@ -71,10 +73,10 @@ A few rules apply to breakpoints:
 
 ## 3. Building the image
 
-From the `demo` folder, run the program with Racket. The program builds the image and writes its output next to the source file. The output names come from the source file, not from the folder you run Racket in, so the results are the same from any directory:
+From the `examples` folder, run the program with Racket. The program builds the image and writes its output next to the source file. The output names come from the source file, not from the folder you run Racket in, so the results are the same from any directory:
 
 ```powershell
-cd c:\repos\Pisemble\demo
+cd c:\repos\Pisemble\examples
 & "C:\Program Files\Racket\racket.exe" bouncing.rkt
 ```
 
@@ -82,10 +84,10 @@ The build writes these files, where `bouncing` is the source file's name:
 
 * `bouncing.img`: the raw image that QEMU runs.
 * `bouncing.gdb`: the breakpoints for that image.
-* `bouncing.obj`: the demo's own object file, which the image links.
+* `bouncing.obj`: the program's own object file, which the image links.
 * `bouncing.elf`: a wrapper around `bouncing.img`. gdb only accepts ELF files as the program, so the debug session loads this file. It holds the same bytes at the same address, plus DWARF line information that maps addresses to `.rkt` lines. QEMU still runs the `.img`.
 
-Each demo gets its own names, so building `plasma.rkt` writes `plasma.img` and does not overwrite `bouncing.img`.
+Each program gets its own names, so building `plasma.rkt` writes `plasma.img` and does not overwrite `bouncing.img`.
 
 ## 4. Debugging from the command line
 
@@ -146,7 +148,7 @@ These commands work at the gdb prompt while the program is paused:
 
 ## 5. Debugging from VS Code
 
-The workspace has tasks and a launch configuration in `.vscode/`. Open the demo file you want to debug, such as `demo/bouncing.rkt`, and press F5. You do not need to type the commands above.
+The workspace has tasks and a launch configuration in `.vscode/`. Open the program you want to debug, such as `examples/bouncing.rkt`, and press F5. You do not need to type the commands above.
 
 | Action | How to run it | What it does |
 | ------ | ------------- | ------------ |
@@ -156,7 +158,7 @@ The workspace has tasks and a launch configuration in `.vscode/`. Open the demo 
 | Run without debugging | Run the task `Build and run in QEMU` | Builds the image, then runs QEMU with the UART on stdout. |
 | Stop QEMU | Run the task `Stop QEMU` | Stops the QEMU process that holds the gdb port. Normally you do not need this, because the debug session stops it when it ends. |
 
-The debug button works on the file that is open in the editor. It builds that file, so the breakpoints in the `.gdb` file match the code you are looking at. Open a different demo and press F5 to debug it.
+The debug button works on the file that is open in the editor. It builds that file, so the breakpoints in the `.gdb` file match the code you are looking at. Open a different program and press F5 to debug it.
 
 > [!WARNING]
 > The debug session starts QEMU as a hidden process, and it stops QEMU when the session ends. If the session fails part way through, QEMU can keep running and hold port 1234, and the next session then fails to connect. Run `Stop QEMU` to clear it.
@@ -168,10 +170,10 @@ The debug button works on the file that is open in the editor. It builds that fi
 * Register variables are only trustworthy in the top frame. Registers that a helper may overwrite (x0 to x18) and registers that the call-frame info does not track (x19 to x29) show the callee's values in outer frames. Expect wrong values there.
 * Register variables show as unions. A 64-bit rename shows `u64`, `i64` and `f64` members (`reg64`), and a 32-bit rename shows `u32`, `i32` and `f32` members (`reg32`). Expand the variable to pick the interpretation you need. Integers show in hex because `.vscode/launch.json` sets `set output-radix 16` in gdb. The same union also shows `unsigned (dec)`, `signed (dec)`, `bits` rows (32 bits per row, grouped by byte), `bytes (little endian)` and `ascii` rows. These come from the gdb pretty-printer in `tools/gdb/reg-printers.py` (pisemble-ancillary repo), which `.vscode/launch.json` there loads with `source` in `setupCommands`.
 * Hovering over a register name in a `.rkt` file shows its value while a `cppdbg` session is paused. The C/C++ extension ignores `.rkt` files, so the local `pisemble.register-hover` extension in `tools/register-hover/` (pisemble-ancillary repo) provides the hover. Run `tools\register-hover\install.ps1` once, then reload the window. It handles raw names such as `x14`, `w0` and `sp`, and renames from `regs` in the same file, such as `ptr (x3)`. Renames from other files are not resolved. The hover lists the value in hex, unsigned, signed and float form, then the bits grouped by byte in 32-bit rows, then the bytes in memory order and as ASCII. The bytes are little-endian, so the low byte comes first. The hover does not flag outer frames, so treat values there with the care described above.
-* Code produced by a macro maps to the line of the macro use, not the line inside the macro. For example, code from `(demo {` shows as that line in `rotozoomer.rkt`. Code written directly in your file keeps its own line.
+* Code produced by a macro maps to the line of the macro use, not the line inside the macro. For example, code from `(pi2d` shows as that line in `rotozoomer.rkt`. Code written directly in your file keeps its own line.
 * The prologue of a `subr` is the exception. Stepping into a helper can stop first on a line in the macro template, such as `lib/stack.rkt`, before it reaches the body in your file. Press `step` again to continue into the body.
 * The `brk` instruction does not stop gdb. A `brk` instruction in the program goes to the platform's fault handler, which prints the exception registers over the UART. Use `(breakpoint)` to stop in gdb.
-* Addresses are image addresses. The generated file assumes the image is loaded at `0x80000` and that the code runs at that address. A breakpoint in code that runs under a different virtual mapping, such as after the MMU is turned on with a different layout, may never hit. So far only the breakpoint in `Demo-init` has been tested.
+* Addresses are image addresses. The generated file assumes the image is loaded at `0x80000` and that the code runs at that address. A breakpoint in code that runs under a different virtual mapping, such as after the MMU is turned on with a different layout, may never hit. So far only the breakpoint in the `#:init` hook (`Pi2d-init` in the generated code) has been tested.
 * Rebuild after each change. The offsets in `<name>.gdb` describe one build. After you edit the source, the old offsets point at the wrong instructions. Pressing F5 rebuilds the file for you.
 
 ## 7. Troubleshooting

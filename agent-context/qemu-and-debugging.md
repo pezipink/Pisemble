@@ -86,7 +86,7 @@ Triage for a black or frozen screen:
 
 ## Debugging with gdb and breakpoints
 
-Use `(breakpoint)` anywhere a body form is allowed, such as inside a `subr`. It emits one `nop`, so its line has its own address; without it, `next` cannot leave the line. The label `:Bp-<file>-L<line>C<col>` is defined on that `nop`, where `<file>` is the source file name without its extension. When the image is linked, `<image>.gdb` is written next to it, with one `break *(0x80000 + offset)` per breakpoint. A demo that uses breakpoints must build as an image, not an object.
+Use `(breakpoint)` anywhere a body form is allowed, such as inside a `subr`. It emits one `nop`, so its line has its own address; without it, `next` cannot leave the line. The label `:Bp-<file>-L<line>C<col>` is defined on that `nop`, where `<file>` is the source file name without its extension. When the image is linked, `<image>.gdb` is written next to it, with one `break *(0x80000 + offset)` per breakpoint. A program that uses breakpoints must build as an image, not an object.
 
 Setup, once: `gdb-multiarch` from MSYS2 (`pacman -S mingw-w64-x86_64-gdb-multiarch` in `C:\msys64`). The ARM toolchain's `arm-none-eabi-gdb` cannot debug AArch64.
 
@@ -99,11 +99,11 @@ VS Code (needs `ms-vscode.cpptools`), using the files in `.vscode/`:
 
 The debug start is `.vscode/qemu-debug.ps1 -Action start -Image <name>.img`. It checks that `<name>.elf` exists (the build writes it, and the script fails with "Run the build task first" if it is missing), stops any old QEMU on the port, starts QEMU, and waits until the port accepts connections. The debug session loads `<name>.elf` as the program, because cpptools (and gdb) reject a raw binary. The ELF is a single segment at `0x80000` holding the same bytes as the image. It has DWARF 4 line info, a function symbol table, `.debug_frame` call-frame info, and `.debug_info` with the `regs`/`subr` register renames as variables (`DW_OP_regN` locations, typed as the `reg64` union of `u64`/`i64`/`f64` or the `reg32` union of `u32`/`i32`/`f32`), all written by `dwarf.rkt`. The launch config sets gdb `output-radix 16`, so integers show in hex. Frames and `finish` work through helper calls. Register variables are reliable in the top frame only.
 
-Source-line debugging: gutter breakpoints in `.rkt` files work because `.vscode/settings.json` sets `debug.allowBreakpointsEverywhere`. gdb resolves `file.rkt:line` through the line info. Code produced by a macro maps to the macro use site, such as the `(demo {` line.
+Source-line debugging: gutter breakpoints in `.rkt` files work because `.vscode/settings.json` sets `debug.allowBreakpointsEverywhere`. gdb resolves `file.rkt:line` through the line info. Code produced by a macro maps to the macro use site, such as the `(pi2d` line.
 
 Debugging is at the source-line level for code in `.rkt` files, with function names in backtraces. A `subr` prologue can map to a macro template line in `lib/stack.rkt`. Renames from `regs` and `subr` show as variables in the top frame (scope is the enclosing `subr`). Use `x/8i $pc` and `info registers` for the instructions and the machine state. The C/C++ hover does not apply to `.rkt` files, since it only activates for `c` and `cpp` language IDs. The local `pisemble.register-hover` extension (`tools/register-hover/` in the pisemble-ancillary repo, installed by `install.ps1`) shows register values on hover in `.rkt` files during a `cppdbg` session. It handles raw names and same-file `regs` renames, and it does not flag outer frames. The hover also shows the bits, grouped by byte, and the bytes and ASCII in little-endian memory order. The Variables panel shows the same extra rows for `reg64` and `reg32` unions, through the gdb pretty-printer in `tools/gdb/reg-printers.py` (pisemble-ancillary repo), which `launch.json` loads in `setupCommands`.
 
-Manual check, from the folder that holds the image (replace `bouncing` with the demo's name):
+Manual check, from the folder that holds the image (replace `bouncing` with the program's name):
 
 ```powershell
 & "C:\msys64\mingw64\bin\gdb-multiarch.exe" -batch -nx -ex "set architecture aarch64" -ex "target remote 127.0.0.1:1234" -ex "source bouncing.gdb" -ex "continue" -ex "info registers pc" -ex "x/3i `$pc"

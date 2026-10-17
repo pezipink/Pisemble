@@ -185,7 +185,7 @@ These are ordinary `#lang pisemble` modules. Require them by relative path.
 ### struct.rkt
 
 * `(load-immediate reg value)` loads any constant up to 64 bits using `mov` and `movk`.
-* `(/struct name ([field size] ...))` defines field offsets and accessor macros.
+* `(/struct name ([field size] ...))` defines `sizeof/name`, `name/field` offsets, and the accessor macros `name/field-get` and `name/field-set`. Sizes 1, 2, 4 and 8 are supported. Use it at module level, and write the accessors in parentheses inside `{ }`, for example `(row/disc-get w4 x2)`. A bare `row/disc-get w4 x2` line inside `{ }` fails with "unbound identifier". It has no data initialiser, so write the fields with `write-value-32` in order.
 
 ### expr.rkt
 

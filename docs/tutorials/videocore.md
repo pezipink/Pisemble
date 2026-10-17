@@ -24,7 +24,7 @@ Read these project notes first:
 * [qemu-and-debugging.md](../../agent-context/qemu-and-debugging.md) for how the project runs under QEMU and how to read the UART output.
 * [dma.md](./dma.md) for the DMA tutorial, which also uses the mailbox to find free channels.
 
-The snippets use `send-vcore-msg` and `debug-str-reg` from [platform.rkt](../../lib/platform.rkt), so a demo that follows them starts with `(require "../lib/platform.rkt")`, as the other demos do.
+The snippets use `send-vcore-msg` and `debug-str-reg` from [platform.rkt](../../lib/platform.rkt), so a program that follows them starts with `(require "../lib/pi2d.rkt")`, as the other examples do.
 
 > [!NOTE]
 > The clock, board, and DMA results in this tutorial come from a QEMU run of the fragments below. Real hardware, and other firmware versions, may report different values.
@@ -131,11 +131,13 @@ The smallest useful message asks for one clock rate. It uses tag `$30002` with c
   ldr w0 [x8 @24]               ; rate in Hz
 })
 
-(subr Demo-init () [] {
-  (debug-str "videocore probe" #t)
-  bl Read-arm-clock:
-  (debug-str-reg "arm clock hz " x0)
-})
+(pi2d
+  #:init () [] {
+    (debug-str "videocore probe" #t)
+    bl Read-arm-clock:
+    (debug-str-reg "arm clock hz " x0)
+  }
+  ...)                          ; the data and Read-arm-clock above go in the same { } block
 ```
 
 The total size is 32 bytes: a 4-byte header, a 4-byte request word, the 12-byte tag header, the 8-byte value buffer, and the 4-byte end tag. The reply echoes the clock id at offset `$14` and writes the rate at offset `$18`. In a QEMU run, the rate was 700000000 Hz.

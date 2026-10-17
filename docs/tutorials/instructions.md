@@ -20,7 +20,7 @@ You will write the code yourself. The snippets here show one instruction or a sm
 Read these project notes first:
 
 * [language.md](../../agent-context/language.md) for the supported instruction list, the addressing table, and the unsupported forms. This tutorial follows that file.
-* [bouncing.rkt](../../demo/bouncing.rkt) for a working program that uses several of these instructions. Section 8 walks through part of it.
+* [bouncing.rkt](../../examples/bouncing.rkt) for a working program that uses several of these instructions. Section 8 walks through part of it.
 
 Every snippet in this tutorial assembled with the current Pisemble expander. The encodings for the uncommon instructions match the expected values in [instruction-test.rkt](../../instruction-test.rkt). Behaviour on real hardware is a separate question, and the notes say to check it under QEMU before you trust it.
 
@@ -143,7 +143,7 @@ mul  x0 x0 x2   ; x0 = quotient * divisor
 sub  x0 x1 x0   ; x0 = x1 - quotient * divisor, which is the remainder
 ```
 
-The ARM manual says that dividing by zero gives a result of zero and does not raise an exception. Check this under QEMU before you depend on it. The bouncing demo in section 8 divides only by a value it has already checked.
+The ARM manual says that dividing by zero gives a result of zero and does not raise an exception. Check this under QEMU before you depend on it. The bouncing example in section 8 divides only by a value it has already checked.
 
 ## 5. Logical operations and bitmask immediates
 
@@ -275,7 +275,7 @@ clz  x0 x0          ; leading zeros of the reversed value = trailing zeros of x1
 
 ## 8. Worked example: the bouncing ball
 
-[bouncing.rkt](../../demo/bouncing.rkt) puts several of these instructions together. The `bounce-axis` subroutine returns a coordinate that moves in a straight line and reflects at each end of its range. Here is the core of it, with the setup lines and the comments removed:
+[bouncing.rkt](../../examples/bouncing.rkt) puts several of these instructions together. The `bounce-axis` subroutine returns a coordinate that moves in a straight line and reflects at each end of its range. Here is the core of it, with the setup lines and the comments removed:
 
 ```racket
 mul position frame speed      ; position = frame * speed
@@ -370,6 +370,8 @@ cbz  x0 done+        ; branch if x0 is zero
 cmp  x1 x2
 b.lt less+           ; branch if x1 < x2, signed
 ```
+
+`b.hs` and `b.lo` are aliases of `b.cs` and `b.cc`. They branch on an unsigned comparison: higher or same, and lower.
 
 `br` jumps to an address in a register and `blr` calls one. `ret` returns through `x30` by default.
 
@@ -555,5 +557,5 @@ Check [language.md](../../agent-context/language.md) for the full list. These ca
 3. Write `cset` for "x1 is between 10 and 20 inclusive". Use two compares and think about which conditions you need.
 4. Write a short fragment that counts the trailing zeros of `x1` using `rbit` and `clz`. Test it with 0, 1, and `$8000000000000000` under QEMU.
 5. Use `ubfx` to pull out the red, green, and blue fields of a 0x00RRGGBB colour. Then use `lsl` and `orr` to rebuild the colour from its parts. Check your answer with `ubfx` on each channel.
-6. Change `bounce-axis` so that it returns a triangle wave with a 2 pixel margin at each end. Which instruction in the bouncing demo would you change, and why?
+6. Change `bounce-axis` so that it returns a triangle wave with a 2 pixel margin at each end. Which instruction in the bouncing example would you change, and why?
 7. Build a 64-bit constant with `movz` and three `movk` instructions. Check each step with the register dump in your debugger.

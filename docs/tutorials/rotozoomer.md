@@ -21,12 +21,12 @@ You will write the code yourself. This tutorial gives you the math, a register p
 Read these project notes first:
 
 * [language.md](../../agent-context/language.md) for the Pisemble syntax used in the snippets.
-* [demo-template.md](../../agent-context/demo-template.md) for the demo contract, the `Draw-frame` subroutine, and the constants in `platform.rkt`.
+* [pi2d.md](../../agent-context/pi2d.md) for the `pi2d` form, the `#:render` frame contract, and the `#:width`, `#:height` and `#:bpp` constants.
 * [qemu-and-debugging.md](../../agent-context/qemu-and-debugging.md) for how the project builds and runs under QEMU.
 * [platform.rkt](../../lib/platform.rkt) for `width`, `height`, and `rgb`.
-* [floor-cube.rkt](../../demo/floor-cube.rkt) for an example of single precision floating point code.
+* [floor-cube.rkt](../../examples/floor-cube.rkt) for an example of single precision floating point code.
 
-The examples target the 320 by 200 screen in 32 bit colour mode, as set up by `platform.rkt`. Each pixel is one 32 bit word. The screen row length is `ROW-BYTES`, which is 1280 bytes.
+The examples target the 320 by 200 screen in 32 bit colour mode, which are the `pi2d` defaults. Each pixel is one 32 bit word. The screen row length is `ROW-BYTES`, which is 1280 bytes.
 
 ## What a rotozoomer draws
 
@@ -167,7 +167,7 @@ The table holds `65536 * sin(angle)` as a 32 bit signed integer. The Racket code
 
 `bitwise-and` with `#xFFFFFFFF` gives the two's complement bit pattern for negative values. `write-value-32` masks each byte, so negative numbers are stored correctly.
 
-Emit the table in the data section of the demo:
+Emit the table in the data section of the program:
 
 ```text
 /= 4
@@ -179,14 +179,13 @@ A quarter turn is 256 steps, so cosine is the sine value 256 entries further alo
 
 ## Setting up each frame in fixed point
 
-Each frame, the program needs `cos`, `sin`, the scale `z`, the four steps, and the start values. Here is the setup as a fragment. It assumes the `Draw-frame` subroutine has these aliases:
+Each frame, the program needs `cos`, `sin`, the scale `z`, the four steps, and the start values. Here is the setup as a fragment. It assumes the `#:render` hook has these aliases:
 
 ```text
-(subr Draw-frame
-      ([vptr x0] [frame x1] [sines x2] [tex x3] [ang x4] [cs x5] [sn x6]
-       [z x7] [dudx x8] [dvdx x9] [dudy x10] [dvdy x11] [urow x12]
-       [vrow x13] [u x14] [v x15] [tmp x16] [tmp2 x17] [pp x21] [qq x22]
-       [ny x19] [nx x20]) [] {
+#:render ([vptr x0] [frame x1] [sines x2] [tex x3] [ang x4] [cs x5] [sn x6]
+          [z x7] [dudx x8] [dvdx x9] [dudy x10] [dvdy x11] [urow x12]
+          [vrow x13] [u x14] [v x15] [tmp x16] [tmp2 x17] [pp x21] [qq x22]
+          [ny x19] [nx x20]) [] {
 ```
 
 The setup uses these steps:
@@ -246,7 +245,7 @@ asr dvdy dvdy @16
 
 `mov x @-1` is not allowed, so `dvdx` is negated by subtracting it from zero.
 
-Finally, the start values. This pins the texture centre to the pivot, as described above. The integer example keeps the pivot fixed at `(160, 100)`. The float version in the demo moves it, as shown below:
+Finally, the start values. This pins the texture centre to the pivot, as described above. The integer example keeps the pivot fixed at `(160, 100)`. The float version moves it, as shown below:
 
 ```text
 ; pin texture centre (32,32) to screen centre (160,100)
@@ -429,7 +428,7 @@ cbnz nx next-pixel-
 
 The texel lookup is the same as in fixed point, except that the conversion replaces the shift. The float code also needs `fmov s8 s12` and `fmov s9 s13` at the start of each row, to copy the row start into the working values.
 
-The float version runs in QEMU, and the project's `floor-cube.rkt` demo already uses the FPU. Check the notes in [language.md](../../agent-context/language.md) about which exception levels allow FP before you use it in other code.
+The float version runs in QEMU, and the `floor-cube.rkt` example already uses the FPU. Check the notes in [language.md](../../agent-context/language.md) about which exception levels allow FP before you use it in other code.
 
 > [!NOTE]
 > This tutorial does not compare the two versions on hardware. Measure both on your own Raspberry Pi 3 if the speed matters to you.
@@ -478,7 +477,7 @@ Put the `racket/draw` code in a plain `#lang racket/base` module, and require it
 * `(new bitmap-dc% [bitmap dst])` fails with a `string-replace` contract error. The reader mangles the keyword bracket syntax.
 * `(make-object bitmap-dc% dst)` fails with `bitmap-dc: unbound identifier`. The reader strips the `%` from the class name.
 
-The helper module avoids both problems. Save it as `texture.rkt` in the same folder as your demo:
+The helper module avoids both problems. Save it as `texture.rkt` in the same folder as your program:
 
 ```racket
 #lang racket/base
@@ -513,7 +512,7 @@ Each step in the helper has a reason:
 
 `racket/draw` is part of the full Racket distribution. If `require` fails with a missing module, install the `draw-lib` package.
 
-### Use the texture in the demo
+### Use the texture in the program
 
 The Pisemble file requires the helper and points at the image with `define-runtime-path`. That makes the path relative to the source file, so it does not depend on the directory where you run `racket`:
 
@@ -530,7 +529,7 @@ The Pisemble file requires the helper and points at the image with `define-runti
 (define texels (load-texture logo-path tex-size))
 ```
 
-Replace the `platform.rkt` path with your own. Copy `logo.png` next to the demo. The repository has a test image at [pink-squirrel.png](../../demo/pink-squirrel.png), a 64 by 64 pixel-art squirrel based on the Pink Squirrel Labs favicon, so you can copy that and rename it to `logo.png`.
+Replace the `platform.rkt` path with your own. Copy `logo.png` next to the program. The repository has a test image at [pink-squirrel.png](../../examples/pink-squirrel.png), a 64 by 64 pixel-art squirrel based on the Pink Squirrel Labs favicon, so you can copy that and rename it to `logo.png`.
 
 Emit `texels` in the data section exactly as you emitted the chessboard. The image is now a table of words, and the inner loop does not know or care where they came from.
 
@@ -552,9 +551,9 @@ Emit `texels` in the data section exactly as you emitted the chessboard. The ima
 
 ## Build and run
 
-Build the demo by running the Racket file. The build writes a `.img` file beside the source. Run the image with the QEMU command in [qemu-and-debugging.md](../../agent-context/qemu-and-debugging.md).
+Build the program by running the Racket file. The build writes a `.img` file beside the source. Run the image with the QEMU command in [qemu-and-debugging.md](../../agent-context/qemu-and-debugging.md).
 
-The finished version of this tutorial's image rotozoomer is in [rotozoomer.rkt](../../demo/rotozoomer.rkt), with the image loader in [texture.rkt](../../demo/texture.rkt). Build it from the `demo` folder with `racket rotozoomer.rkt`.
+The finished version of this tutorial's image rotozoomer is in [rotozoomer.rkt](../../examples/rotozoomer.rkt), with the image loader in [texture.rkt](../../examples/texture.rkt). Build it from the `examples` folder with `racket rotozoomer.rkt`.
 
 To check the output without a window, connect to the QEMU monitor and send `screendump frame.ppm`. Take two dumps a second apart and compare them. If the hashes are the same, the frames are not changing and the angle or scale is stuck.
 
@@ -564,6 +563,6 @@ To check the output without a window, connect to the QEMU monitor and send `scre
 * Change the scale so `z` ranges from 0.1 to 2.0. Check where the texture repeats most often.
 * Replace the chessboard with the image texture and verify that the logo tiles across the screen.
 * Build the 256 texel version and compare the detail with the 64 texel version.
-* Change the orbit radii `90` and `60` to make the pivot wander further, or change the zoom base and amplitude to zoom more or less. The demo already moves the pivot in a circle.
+* Change the orbit radii `90` and `60` to make the pivot wander further, or change the zoom base and amplitude to zoom more or less. The program already moves the pivot in a circle.
 
 Bilinear filtering, which blends the four nearest texels instead of picking one, is the next step after these exercises. It uses the fractional part of `u` and `v`, which the loop above drops.
