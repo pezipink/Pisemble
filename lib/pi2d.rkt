@@ -68,7 +68,8 @@
         (values (current-directory) "program")))
   (define obj-file (path->string (build-path dir (string-append base-name ".obj"))))
   (define img-file (path->string (build-path dir (string-append base-name ".img"))))
-  (with-syntax ([obj obj-file] [img img-file]
+  (define uart-file (path->string (build-path dir "uart.obj")))
+  (with-syntax ([obj obj-file] [img img-file] [uart uart-file]
                 [w w] [h h] [b b]
                 [init-form (hook-subr 'Pi2d-init '#:init)]
                 [update-form (hook-subr 'Pi2d-update '#:update)]
@@ -83,4 +84,5 @@
           render-form
           body-form ...
           { (gfx-library) })
-        (platform-image img obj))))
+        (uart-object uart)
+        (platform-image img obj uart))))

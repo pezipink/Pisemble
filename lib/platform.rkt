@@ -19,16 +19,17 @@
 ;;
 ;; Rules for hook code:
 ;;  * Hooks may use x0-x28 freely. Anything a hook needs to keep, it stores in memory.
-;;  * Labels starting with a capital letter are global. Only use capitals for
-;;    the Pi2d-* hooks, and don't call platform globals: the linker
-;;    refuses a <name>.obj that references a symbol defined in the platform.
+;;  * Labels starting with a capital letter are global. Use capitals for the
+;;    Pi2d-* hooks. Send-char is the only platform global the demo may call; it
+;;    lives in uart.obj (see uart-object in periph.rkt), which platform-image links.
+;;    Don't call other platform globals: the linker refuses a <name>.obj that
+;;    references a symbol defined in the platform.
 ;;  * <name>.obj is linked at a 4KB boundary, so /= up to $1000 works as expected.
 ;;
 ;; Also assembled into the demo's object file (lowercase, call with bl):
 ;;     clear-screen   x0 = page, w1 = colour (palette index in 8 bit mode)
 ;;     fill-rect      x0 = page, x1 = x, x2 = y, x3 = w, x4 = h, w5 = colour
 ;;     set-palette    x0 = first index, x1 = count, x2 = address of rgb words
-;;     send-char      so debug-str / debug-reg / debug-str-reg work
 ;; All preserve registers.
 ;;
 ;; Image layout:  $80000 platform | vectors | page tables | <name>.obj
@@ -91,12 +92,12 @@
         (PUSH x0)
         (PUSH r)
         mov w0 @(if `r.is32 2 3)
-        bl send-char:
+        bl Send-char:
         (POP x0)
-        bl send-char:
+        bl Send-char:
         (for ([_ (in-range (if `r.is32 3 7))])
           { lsr x0 x0 @8
-            bl send-char: })
+            bl Send-char: })
         (POP x0) }]
     [(_ r:register rn:register ...+)
      #'(begin (debug-reg r)
@@ -124,21 +125,6 @@
      (with-syntax ([lbl (datum->syntax stx (string->symbol (format ":Bp-~a-L~aC~a" file-part (syntax-line stx) (syntax-column stx))))])
        #'(begin (try-set-jump-source 'lbl set-jump-source-current)
                 (write-instruction 'nop 'none #f '() '() #f)))]))
-
-;; send-char with its own lowercase literal, so the demo object has no global references
-(define-syntax-parser local-send-char
-  [(_) #'{
-     (subr send-char () [x0 x1 x2 x3] {
-        ldr  x1 uart-base:
-        mov  x2 @$20
-     :wait
-        ldr  w3 (x1 @$54)       ; AUX_MU_LSR: bit 5 = transmitter empty
-        and  w3 w2 w3
-        cbz  w3 wait-
-        strb w0 [x1 @$40]})     ; AUX_MU_IO
-     /= 8
-     :uart-base (write-value-64 (+ PERIPH-BASE $215000))
-  }])
 
 ;; =====================================================================
 ;; helpers assembled into the demo's object file
@@ -213,7 +199,6 @@
 })
 
 (mailbox-routine)
-(local-send-char)
 
 /= 16
 :palette-msg
@@ -396,8 +381,6 @@
     (debug-str "framebuffer request failed" #t)
     b hang-
 
-(create-send-char)
-
 ;; ---------------------------------------------------------------------
 ;; frame handling
 ;; ---------------------------------------------------------------------
@@ -468,24 +451,24 @@
 ; x1 = address, w2 = instruction count
 (subr disassemble-dump ([address x1] [instruction-count w2]) [x0] {
     mov w0 @4
-    bl send-char:
+    bl Send-char:
     mov x0 x1
-    bl send-char:
+    bl Send-char:
     (for ([_ (in-range 7)])
       { lsr x0 x0 @8
-        bl send-char: })
+        bl Send-char: })
     mov x0 x2
-    bl send-char:
+    bl Send-char:
     (for ([_ (in-range 3)])
       { lsr x0 x0 @8
-        bl send-char: })
+        bl Send-char: })
     lsr instruction-count instruction-count @1
     (/do-whilenz instruction-count {
       ldr x0 [x1] @8
-      bl send-char:
+      bl Send-char:
       (for ([_ (in-range 7)])
         { lsr x0 x0 @8
-          bl send-char: })
+          bl Send-char: })
       sub instruction-count instruction-count @1
     })
 })

@@ -127,39 +127,46 @@
   ; our protocol expects a byte of 1 to then
   ; receive a string
   mov w0 @1
-  bl send-char:
+  bl Send-char:
   }
   (for ([c str]) ; loop over each character
     {
      mov w0 @(char->integer c)
-     bl send-char:
+     bl Send-char:
      })
   (when newline?
     {
      mov w0 @$A ; line feed
-     bl  send-char:
+     bl  Send-char:
      mov w0 @$D ; cr
-     bl  send-char:
+     bl  Send-char:
     })
   {
    mov w0 @$0 ; null
-   bl  send-char:
+   bl  Send-char:
    (POP x0)
   })
 
-
-(define-syntax (create-send-char stx)
+; Object containing the global Send-char (byte in w0). Build it with uart-object before
+; the image that calls debug-str, and link the object into that image.
+; It loads the UART base from a literal, not AUXB:, because an object cannot refer to a
+; global that the image defines.
+(define-syntax (uart-object stx)
   (syntax-parse stx
-    [(_)
-      #'(subr send-char ([addr x1]) [x0 x1 x2 x3] {
-          ldr  addr AUXB:
-          ; wait for ready bit
-          mov  x2 @$20
-       :wait     
-          ldr  w3 (addr @aux-lsr)
-          and  w3 w2 w3
-          cbz  w3 wait-
-          strb w0 [addr @aux-io]})]))
+    [(_ filename:string)
+      #'(aarch64 filename [] {
+          (subr Send-char ([addr x1]) [x0 x1 x2 x3] {
+            ldr  addr uart-base:
+            ; wait for ready bit
+            mov  x2 @$20
+         :wait
+            ldr  w3 (addr @aux-lsr)
+            and  w3 w2 w3
+            cbz  w3 wait-
+            strb w0 [addr @aux-io]})
+          /= 8
+         :uart-base (write-value-64 AUX-BASE)
+        })]))
 
-(provide init-uart debug-str create-send-char periph-addresses PERIPH-BASE)
+(provide init-uart debug-str uart-object periph-addresses PERIPH-BASE)
                      

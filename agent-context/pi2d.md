@@ -94,7 +94,7 @@ Routines assembled into the program's `.obj` (call with `bl name:`; all preserve
 | `clear-screen` | `x0` page, `w1` colour                                        | In 8 bit mode `w1` is a palette index                       |
 | `fill-rect`    | `x0` page, `x1` x, `x2` y, `x3` width, `x4` height, `w5` colour | Width and height must be at least 1. No clipping            |
 | `set-palette`  | `x0` first index, `x1` count, `x2` address of `rgb` words     | 8 bit mode only. Up to 256 entries                          |
-| `send-char`    | `w0` byte                                                     | Makes `debug-str`, `debug-reg` and `debug-str-reg` work     |
+| `Send-char`    | `w0` byte (from `uart.obj`)                                  | Makes `debug-str`, `debug-reg` and `debug-str-reg` work     |
 
 Everything from `lib/periph.rkt`, `stack.rkt`, `struct.rkt` and `expr.rkt` is re-exported, so `PUSH`, `subr`, `load-immediate`, `/if`, `/for` and the rest are available. See [language.md](language.md).
 

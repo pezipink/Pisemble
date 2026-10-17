@@ -16,7 +16,9 @@
 
 (define INTERVAL 250000) ; the system timer counts 1 MHz
 
-(aarch64 "timer-irq.img" []{
+(uart-object "uart.obj")
+
+(aarch64 "timer-irq.img" ["uart.obj"]{
   mrs x0 mpidr_el1
   mov x1 @$3
   and x0 x0 x1
@@ -92,8 +94,6 @@
   (debug-str "unexpected exception" #t)
 :halt
   b halt-
-
-(create-send-char)
 
 ; 16 entries of $80 bytes. At EL2 the core runs on SP_EL2, so an IRQ is taken
 ; to entry 5 (current EL, SPx). Entry 1 (SP0) points at the same handler in case

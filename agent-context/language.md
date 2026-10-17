@@ -205,8 +205,8 @@ The macros generate labels like `:then-start_0` and branch to them with `+` and 
 * `PERIPH-BASE` is `$3F000000` for the Pi 3.
 * `(periph-addresses)` emits 8 byte aligned data labels such as `:AUXB` and `:GPFSEL1`. They are capitalised, so they are global; include them once per image.
 * `(init-uart)` sets up the mini UART. It needs `periph-addresses` in the same image.
-* `(create-send-char)` defines `send-char` (byte in `w0`). It loads `AUXB:` so it also needs `periph-addresses`.
-* `(debug-str "text" newline?)` sends a string using the UART protocol in [qemu-and-debugging.md](qemu-and-debugging.md). It needs a `send-char` routine in the same program.
+* `(uart-object "uart.obj")` writes an object that defines the global `Send-char` (byte in `w0`). Link it into the image with `"uart.obj"` in the object list. It loads the UART base from a literal, so it does not use `AUXB:`.
+* `(debug-str "text" newline?)` sends a string using the UART protocol in [qemu-and-debugging.md](qemu-and-debugging.md). It needs `Send-char` from `uart.obj`, linked into the same program.
 * `debug-reg` (send a register as a number) and `debug-str-reg` (a string followed by a register) are not in `periph.rkt`. Copies live in `lib/platform.rkt` and in `emu_clean.rkt` in the pisemble-wolf3d repo.
 
 ## Writing macros that emit assembly

@@ -32,7 +32,7 @@ ones it uses explicitly:
    Loops test before the body. The @racket[/do-whilenz], @racket[/do-while] and
    similar forms test after it, so the body always runs at least once.}
  @item{@litchar{pisemble/lib/periph}: UART helpers, including
-   @racket[init-uart], @racket[debug-str] and @racket[create-send-char].}
+   @racket[init-uart], @racket[debug-str] and @racket[uart-object].}
 ]
 
 @section{Building a language on Pisemble}

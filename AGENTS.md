@@ -32,7 +32,7 @@ The assembler is a work in progress. It supports a subset of AArch64, and instru
 | `expander.rkt`             | Assembler core: instruction table, encoders, `arm-line`, `aarch64` macro   |
 | `objfile.rkt`              | Object file format and the merge step of the linker                        |
 | `reader.rkt`, `lang/`      | Reader extensions (`{}`, `$`, `%`, `@`) and the `#lang pisemble` hookup    |
-| `lib/periph.rkt`           | Peripheral addresses, `init-uart`, `debug-str`, `create-send-char`         |
+| `lib/periph.rkt`           | Peripheral addresses, `init-uart`, `debug-str`, `uart-object`              |
 | `lib/stack.rkt`            | `PUSH`/`POP`, `regs` (register renaming), `subr`, `preserve`               |
 | `lib/struct.rkt`           | `load-immediate`, `/struct`                                                |
 | `lib/expr.rkt`             | Structured control flow: `/if`, `/when`, `/cond`, `/whilenz`, `/while` ... |
