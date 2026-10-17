@@ -16,7 +16,7 @@ Everything is assembled by the `aarch64` macro in `expander.rkt`:
 * The output file name decides the kind: names ending in `.img` produce a raw binary image, anything else a Pisemble object file.
 * The link list works for both kinds. An object can be built from other objects.
 * Each form starts with a fresh assembler state. Several forms can run in one source file, in order. `lib/pi2d.rkt` uses this: `(pi2d ...)` builds `<name>.obj`, then builds `<name>.img` from it, both beside the program source.
-* Files are written to the current directory, and there is no up-to-date check. Every run reassembles and relinks.
+* Files are written to the current directory. An object file is skipped when it is up to date: its `.obj` and `.obj.dbg` sidecar exist and are not older than the module that builds it, the modules that module requires, or the objects it links. Images are always relinked.
 * Object files are read at link time from the current directory, so build the objects first (or in the same file, earlier).
 
 ## Image layout and addresses

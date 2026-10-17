@@ -3,6 +3,7 @@
 *.elf
 *.gdb
 *.obj
+*.dbg
 *.zo
 *.dep
 

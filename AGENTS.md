@@ -63,4 +63,4 @@ Read the file that matches your task before editing:
 5. `/whilenz`, `/whilez`, `/while` and `/for` test before the body, so the body can run zero times. Use `/do-whilenz`, `/do-whilez`, `/do-while` when the body must run at least once.
 6. QEMU `-kernel` enters at EL2, not EL1. Use EL2 system registers.
 7. Instruction-level problems usually show up as a silent hang or black screen. Use the QEMU monitor (`info registers`, `x /20i $pc`, `screendump`) rather than guessing; see [qemu-and-debugging.md](agent-context/qemu-and-debugging.md).
-8. There is no incremental build. Building a program always reassembles `<name>.obj` and relinks `<name>.img`.
+8. Building is only partly incremental. `<name>.img` is always relinked. `<name>.obj` is skipped when it and its `.obj.dbg` sidecar are not older than the source module, the modules it requires, or the objects it links. Delete the `.obj` to force a rebuild.
