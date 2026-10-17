@@ -87,7 +87,7 @@ Programs then start with `#lang mylang`. Because `pisemble/base` is
 ## Documentation
 
 * [docs/tutorials/](docs/tutorials/) covers instructions, the MMU, DMA,
-  multicore and debugging.
+  multicore, interrupts and debugging.
 * [scribblings/](scribblings/) contains the reference manual.
 * [agent-context/](agent-context/) contains detailed notes on the language,
   the linker, and QEMU and debugging.
