@@ -6,8 +6,8 @@
 ;; helpers, the barrel shifter (add x1 x2 x3 LSL @n) and NEON (movi, st1).
 ;;
 ;; Sixteen filled discs are drawn from the largest to the smallest. Each
-;; disc is one colour from a four colour table, and the colour rotates with
-;; the frame number, so the rings appear to move outwards.
+;; disc is one colour from a 64 colour plasma palette, and the palette
+;; rotates one step every FRAMES-PER-STEP frames, so the rings appear to move outwards.
 ;;
 ;; The half-widths of each disc are computed in Racket when the program is
 ;; assembled. The table is a flat array of `row` records, one for every row
@@ -22,8 +22,19 @@
   (for/list ([k (in-range 16)])
     (* 23 (- 16 k))))
 
+; a plasma style palette: three sine waves a third of a cycle apart, so the
+; last entry blends back into the first
+(define colour-count 64)
+(define TAU (* 8 (atan 1)))
 (define colour-table
-  (list (rgb 255 60 60) (rgb 60 255 60) (rgb 60 120 255) (rgb 255 255 255)))
+  (for/list ([i (in-range colour-count)])
+    (define t (/ (* TAU i) colour-count))
+    (define (channel phase)
+      (inexact->exact (round (+ 128 (* 127 (sin (+ t phase)))))))
+    (rgb (channel 0) (channel (/ TAU 3)) (channel (* 2 (/ TAU 3))))))
+
+; frames per colour step: 15 at 60 FPS is four steps a second
+(define FRAMES-PER-STEP 15)
 
 ; one record per row: the disc it belongs to, its dy, and its half-width.
 ; Accessors: (row/disc-get reg base), (row/dy-get reg base), (row/half-get reg base).
@@ -43,31 +54,23 @@
   (debug-str "rings" #t)
 }
 
-; the frame counter lives in memory, so render can read it
-#:update () [] {
-  adr x2 phase-count:
-  ldr w3 [x2 @0]
-  add w3 w3 @1
-  str w3 [x2 @0]
-}
-
-; x0 = back page. Centre is (512, 384), so the largest disc spans rows 16..752.
+; x0 = back page, x1 = frame number. Centre is (512, 384), so the largest disc spans rows 16..752.
 #:render () [] {
   ; clear the page to black, 16 bytes at a time
-  movi v0.2d @0
+  movi v0.2d @0                          ; NEON: v0 = 128 bits of zero
   mov x12 x0
   (load-immediate x13 196608)            ; 3145728 bytes / 16
   (/whilenz x13 {
-    st1 {v0.16b} [x12]
+    st1 {v0.16b} [x12]                   ; NEON: store all 16 bytes of v0
     add x12 x12 @16
     sub x13 x13 @1
   })
 
-  adr x2 phase-count:
-  ldr w1 [x2 @0]                         ; phase
+  (load-immediate x5 FRAMES-PER-STEP)
+  udiv x1 x1 x5                          ; phase = frame / FRAMES-PER-STEP
   adr x2 rows:
   (load-immediate x3 (length disc-rows))  ; rows left
-  mov x15 @3                              ; colour mask
+  mov x15 @63                             ; colour mask, colour-count - 1
 
   (/whilenz x3 {
     (row/disc-get w4 x2)                  ; k
@@ -111,8 +114,6 @@
 })
 
 {
-:phase-count
-(write-value-32 0)
 :colour-table
 (for ([c colour-table])
   (write-value-32 c))
