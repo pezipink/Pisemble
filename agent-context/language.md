@@ -96,15 +96,15 @@ Parentheses and brackets are interchangeable: `(x1 @8)` is the same as `[x1 @8]`
 
 * Logical immediates that are not a repeating bitmask (`and x0 x1 @$1234`): load the mask into a register, then use the register form.
 * Register-offset addressing with an `UXTW`/`SXTW`/`SXTX` extend: `add` the offset into a temporary register first. Plain `[x1 x2]` and `[x1 x2 LSL @n]` are supported.
-* Shifted register operands with `ROR` on `add`, `adds`, `sub`, `subs` (not encodable in ARM), and SIMD or double precision register-offset loads: none are available.
+* Shifted register operands with `ROR` on `add`, `adds`, `sub`, `subs` (not encodable in ARM), and `ldr`/`str` of `d` or `v` registers: none are available.
 * Negative unsigned offsets (`ldr x0 [x1 @-8]`): use `ldur` (signed 9 bit offset, no scaling), or adjust the base, or use pre-index or post-index.
 * `mov x0 @-1` or `mov` with a value above 16 bits: use `load-immediate` (below).
 * `mov` with `LSL`: use `movz` or `movk`.
-* `tbz`, `smulh`/`umulh` with 32 bit registers, double precision floating point and SIMD: none are available. Express them with the supported instructions, or emit a raw opcode.
+* `tbz`, `smulh`/`umulh` with 32 bit registers, and SIMD outside the subset in [SIMD](#simd-neon-subset): none are available. Express them with the supported instructions, or emit a raw opcode.
 
-### Floating point (single precision)
+### Floating point
 
-Registers are `s0` to `s31`. Only 32 bit floats are supported, so `d` registers and `v` registers are not available.
+Registers are `s0` to `s31` (32 bit) and `d0` to `d31` (64 bit). The table uses `s` registers. The same forms take `d` registers, except `ldr`/`str`, which are `s` only.
 
 | Form                              | Encoding                                  |
 |-----------------------------------|-------------------------------------------|
@@ -120,6 +120,23 @@ Registers are `s0` to `s31`. Only 32 bit floats are supported, so `d` registers 
 | `ldr sd [xn xm]`, `ldr sd [xn xm LSL @2]`, `str sd [xn xm]` | 32 bit float register-offset load and store. The optional `LSL @2` sets the scaled bit; the index must be an X register |
 
 Note: on QEMU raspi3b the platform runs at EL2, and the FP arithmetic, `fmov` immediate, `fcvtzs`, `fneg` and `str`/`ldr` used in a check ran there with no FP enable. Check the trap bits before using FP from EL1 or EL0.
+
+### SIMD (NEON) subset
+
+Vector registers are `v0` to `v31` with an arrangement suffix: `8b`, `16b`, `4h`, `8h`, `2s`, `4s` or `2d`. Only these forms are assembled:
+
+| Form                                   | Notes                                                    |
+|----------------------------------------|----------------------------------------------------------|
+| `add vd.T vn.T vm.T`, `sub`            | integer lane arithmetic, any arrangement                 |
+| `fadd`, `fmul vd.T vn.T vm.T`          | `2s`, `4s` and `2d` only                                 |
+| `mov vd.T vn.T`                        | register copy, an alias of `orr`                         |
+| `dup vd.T wn`                          | `8b`, `16b`, `4h`, `8h`, `2s` and `4s` fill from a W register |
+| `dup vd.2d xn`                         | fill both 64 bit lanes from an X register                |
+| `movi vd.8b @n`, `movi vd.16b @n`      | one byte, 0 to 255, in every lane                        |
+| `movi vd.2d @n`                        | each byte of the 64 bit value must be 00 or FF           |
+| `ld1 {vt.T} [xn]`, `st1 {vt.T} [xn]`   | one 128 bit vector, base register only (no offset, no post-index) |
+
+The encodings are checked by the instruction test. No program has run them on QEMU yet, so treat them as untested at run time.
 
 ### Raw opcodes for system instructions
 
