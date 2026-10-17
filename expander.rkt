@@ -671,6 +671,8 @@
     ['b.ne 'lbl          'imm19                              #b01010100000000000000000000000001 #f #f] ; not equal, Z = 0
     ['b.cs 'lbl          'imm19                              #b01010100000000000000000000000010 #f #f] ; Carry set, C = 1
     ['b.cc 'lbl          'imm19                              #b01010100000000000000000000000011 #f #f] ; Carry clear, C = 0    
+    ['b.hs 'lbl          'imm19                              #b01010100000000000000000000000010 #f #f] ; Alias of b.cs
+    ['b.lo 'lbl          'imm19                              #b01010100000000000000000000000011 #f #f] ; Alias of b.cc
     ['b.mi 'lbl          'imm19                              #b01010100000000000000000000000100 #f #f] ; Minus, neg ; N = 1
     ['b.pl 'lbl          'imm19                              #b01010100000000000000000000000101 #f #f] ; Positive or zero ; N = 0
     ['b.vs 'lbl          'imm19                              #b01010100000000000000000000000110 #f #f] ; Overflow  ; V = 1
@@ -1289,7 +1291,7 @@
     (pattern x:id
              #:do [(define sym (syntax-e (attribute x)))
                    (define ocs
-                     (list 'add 'adr 'and 'asr 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
+                     (list 'add 'adr 'and 'asr 'b 'b.eq 'b.ne 'b.cs 'b.cc 'b.hs 'b.lo 'b.mi 'b.pl 'b.vs 'b.vc 'b.hi 'b.ls 'b.ge 'b.lt 'b.gt 'b.le 'b.al
                            'bl 'cbz 'cbnz 'tbz 'tbnz 'csel 'cmp 'eor 'eret 'ldp 'ldr 'ldrh 'ldrb 'lsl 'lsr 'mov 'movk 'movz 'mrs 'msr 'mul 'neg 'nop
                            'orr 'ret 'scvtf 'stp 'str 'strb 'strh 'stur 'sub 'sxtb 'sxth 'sxtw 'udiv 'wfe
                            'fabs 'fadd 'fcmp 'fcvtzs 'fcvtzu 'fdiv 'fmov 'fmul 'fneg 'fsqrt 'fsub 'fmax 'fmin 'fmadd 'fmsub 'fnmadd 'fnmsub 'ucvtf 'fcsel
@@ -1366,7 +1368,7 @@
              #:when (not (syntax-e #'x.is32)))))
 (begin-for-syntax
   (define assembler-mnemonics
-    '(adc adcs add adds adr and ands asr b b.eq b.ne b.cs b.cc b.mi b.pl b.vs b.vc
+    '(adc adcs add adds adr and ands asr b b.eq b.ne b.cs b.cc b.hs b.lo b.mi b.pl b.vs b.vc
       b.hi b.ls b.ge b.lt b.gt b.le b.al bfi bic bics bl blr br brk cbz cbnz ccmp
       cinc clz cmn cmp cneg csel csinc csinv csneg cset dmb dsb eor eret extr hlt
       hvc isb ldar ldaxr ldp ldr ldrh ldrb ldrsb ldrsh ldrsw ldur ldurb ldurh ldursb ldursh ldursw ldxr

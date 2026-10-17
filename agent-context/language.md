@@ -173,7 +173,7 @@ These are ordinary `#lang pisemble` modules. Require them by relative path.
 
 ### expr.rkt
 
-Conditions are written `(x0 lt x1)` or `(x0 ge @10)` using the condition names `eq ne cs cc mi pl vs vc hi ls ge lt gt le al`, and can be combined with `(/and c ...)` and `(/or c ...)`. `hs` and `lo` are accepted as aliases for `cs` and `cc` (unsigned higher-or-same and lower).
+Conditions are written `(x0 lt x1)` or `(x0 ge @10)` using the condition names `eq ne cs cc mi pl vs vc hi ls ge lt gt le al`, and can be combined with `(/and c ...)` and `(/or c ...)`. `hs` and `lo` are accepted as aliases for `cs` and `cc` (unsigned higher-or-same and lower), in conditions and as branch mnemonics (`b.hs`, `b.lo`).
 
 * `(/if cond then else)`, `(/when cond then)`, `(/cond ([cond expr] ... [else expr]))`
 * `(/whilenz reg body)`, `(/whilez reg body)`, `(/while cond body)`, `(/for init cond update body)`: test before the body, so the body can run zero times.

@@ -29,7 +29,12 @@
    ; /do-while x1 ne 0: body, cmp, b.ne back
    #x91000442 #xF100003F #x54FFFFC1
    ; /for: init, b to the test, body, update, cmp, b.lt back
-   #xD2800003 #x14000003 #x91000442 #x91000463 #xF100087F #x54FFFFAB))
+   #xD2800003 #x14000003 #x91000442 #x91000463 #xF100087F #x54FFFFAB
+   ; b.hs, b.lo, b.cs and b.cc all branch back to :here, so the offsets are 0, -1, -2, -3
+   #x54000002 #x54FFFFE3 #x54FFFFC2 #x54FFFFA3
+   ; /do-while (x1 hs x2) and (x1 lo x2): body, cmp, back-branch
+   #x91000463 #xEB02003F #x54FFFFC2
+   #x91000463 #xEB02003F #x54FFFFC3))
 
 (test-case "loop macros emit the expected branch structure"
   (define words (image-words))
