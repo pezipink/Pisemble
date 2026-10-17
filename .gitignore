@@ -1,0 +1,17 @@
+# Build outputs written beside each demo source file
+*.img
+*.elf
+*.gdb
+*.obj
+*.zo
+*.dep
+
+# Racket compiled bytecode
+compiled/
+
+# Scribble output written by raco setup in dev-link mode
+/doc/
+
+# Editor and backup files
+*~
+*.bak

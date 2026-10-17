@@ -2,19 +2,23 @@
 
 (define collection "pisemble")
 
-(define version "0.1.0")
+(define version "0.1")
 
 (define deps
-  '("base"))
+  '("base"
+    "draw-lib"
+    "rackunit-lib"))
 
 (define build-deps
   '("scribble-lib"
     "racket-doc"))
 
-(define pkg-desc "ARM assembler")
+(define pkg-desc "Racket assembler and linker for AArch64 (#lang pisemble)")
 
 (define pkg-authors '("pezi_pink@pinksquirrellabs.com"))
 
-(define scribblings '(("pisemble/pisemble.scrbl" ())))
+(define license 'MIT)
+
+(define scribblings '(("scribblings/pisemble.scrbl" ())))
 
 

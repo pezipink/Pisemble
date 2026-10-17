@@ -40,10 +40,10 @@
 (require (for-syntax syntax/parse racket/stxparam racket/syntax))
 (require syntax/parse/define)
 (require racket/stxparam)
-(require "../wolf3d/periph.rkt" "../wolf3d/stack.rkt" "../wolf3d/struct.rkt" "../wolf3d/expr.rkt")
+(require "../lib/periph.rkt" "../lib/stack.rkt" "../lib/struct.rkt" "../lib/expr.rkt")
 (provide (all-defined-out)
-         (all-from-out "../wolf3d/periph.rkt" "../wolf3d/stack.rkt"
-                       "../wolf3d/struct.rkt" "../wolf3d/expr.rkt"))
+         (all-from-out "../lib/periph.rkt" "../lib/stack.rkt"
+                       "../lib/struct.rkt" "../lib/expr.rkt"))
 
 ;; ---- screen ----
 (define width 320)
