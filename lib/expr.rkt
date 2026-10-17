@@ -4,6 +4,12 @@
 (provide  /cond /if /when /for /whilenz /whilez /while
           /do-whilenz /do-whilez /do-while)
 
+; Every macro in this file expands to assembler text: a {} block of
+; instructions and labels, which the assembler then encodes. Control flow
+; uses generated labels. A label is written :name_N, and a branch names it
+; as name_N+ (the nearest matching label below) or name_N- (the nearest
+; matching label above). Labels are never written by hand, so they cannot
+; clash with the user's own labels.
 (begin-for-syntax
   (define labels (make-hash))
   (define (format-label label)
@@ -14,6 +20,9 @@
       ['-     (string->symbol (format "~a-" label))]
       [else (error (format "bad label type ~a" type))]))
              
+  ; Each base name has its own counter, so nested uses get names such as
+  ; for-start_0 and for-start_1. The counter is compile-time state, so names
+  ; are unique within one compile.
   (define (gen-label name)
     (if (hash-has-key? labels name)
         (let ([val (hash-ref labels name)])
@@ -23,6 +32,13 @@
           (hash-set! labels name 0)
           (format "~a_~a" name 0)))))
 
+; Emits a compare and a conditional branch to branch-target. The branch is
+; taken when the condition holds, and otherwise execution falls through.
+; (lhs cond rhs) compares two registers. (lhs cond #:immediate n) compares
+; with a literal, written (x1 ne @0).
+; (/and c ...) branches only when every c holds. Each c is compiled with
+; compile-inverse-condition, so any failure jumps to a local else label
+; placed after the final branch.
 (define-syntax-parser compile-condition #:datum-literals (/and)
   [(_ (lhs:register cond:condition rhs:register) branch-target:label-targ)
    #'{cmp lhs rhs
@@ -46,6 +62,12 @@
          else-label 
            }))])
 
+; The inverse of compile-condition. It branches to branch-target when the
+; condition does not hold, and falls through when it does. It uses the
+; opposite condition code.
+; (/or c ...) branches only when no c holds. Each c is compiled with
+; compile-condition, which jumps to a local then label on a match. If none
+; match, the final b skips to branch-target.
 (define-syntax-parser compile-inverse-condition #:datum-literals (/or)
   [(_ (lhs:register cond:condition rhs:register) branch-target:label-targ)
    #'{cmp lhs rhs
@@ -70,6 +92,8 @@
          then-label 
            }))])
 
+; (/when (/or c ...) body): runs body if any c holds. A matching c branches
+; over the skip, and otherwise b end skips the body.
 (define-syntax-parser /when-or
   [(_ (conditions ...) then-body) 
    (let ([then-start (gen-label "then-start")]
@@ -87,6 +111,8 @@
          end-label
            }))])
 
+; (/when (/and c ...) body): runs body only if every c holds. Each c is
+; inverted, so a failed c jumps past the body.
 (define-syntax-parser /when-and
   [(_ (conditions ...) then-body) 
    (let ([if-end (gen-label "if-end")])
@@ -99,6 +125,8 @@
          end-label
            }))])
 
+; (/if (/and c ...) then else): runs then if every c holds, otherwise else.
+; Any failed c jumps to the else block.
 (define-syntax-parser /if-and
   [(_ (conditions ...) then-body else-body) 
    (let (
@@ -119,6 +147,8 @@
          end-label
            }))])
 
+; (/if (/or c ...) then else): runs then if any c holds, otherwise else.
+; The first matching c jumps to the then block.
 (define-syntax-parser /if-or
   [(_ (conditions ...) then-body else-body) 
    (let ([then-start (gen-label "then-start")]
@@ -137,6 +167,14 @@
          end-label
            }))])
 
+; (/if cond then else) and (/if (/and ...) ...) / (/if (/or ...) ...).
+; Layout for a single condition:
+;     cond branches to then
+;     else-body
+;     b end
+;   then: then-body
+;   end:
+; The /and and /or forms dispatch to /if-and and /if-or.
 (define-syntax-parser /if #:datum-literals (/and /or)
   [(_ (/and conditions ...) then-expr:expr else-expr:expr)
    #'(/if-and
@@ -173,6 +211,9 @@
          end-label
            }))])
 
+; (/when cond body): runs body when cond holds. Otherwise b end skips it.
+; (/when (/and ...) body) and (/when (/or ...) body) dispatch to
+; /when-and and /when-or.
 (define-syntax-parser /when #:datum-literals (/and /or)
   [(_ (/and conditions ...) then-expr:expr)
    #'(/when-and
@@ -202,6 +243,11 @@
            end-label
           }))])
   
+; (/cond ([test expr] ... [else expr])) is a chain of /if. Each test is any
+; /if condition, so /and and /or work. The else clause must come last. With
+; two clauses and no else, the second clause becomes a /when. A single
+; clause with no else matches no pattern, so it is a syntax error. Use /if
+; or /when for that.
 (define-syntax-parser /cond #:datum-literals (else)
   [(_ ([test-expr eval-expr] [else else-expr]))
    #'(/if test-expr eval-expr else-expr)]
@@ -215,11 +261,21 @@
           (/cond (cases ...)))])
 
 
-; loops
+; Loops. The top-tested forms (/for, /while, /whilenz, /whilez) test before
+; the body, so the body may run zero times. The /do- forms test after the
+; body, so it always runs at least once. There is no break or continue.
+; Branching to a label placed after the loop works as a manual break.
 ; //////
 
 
-; the test is at the top, so the body may run 0 times
+; (/for init cond update body): runs init, then jumps to the test. Each pass
+; runs body and then update, and the test branches back to the body while
+; cond holds. Layout:
+;     init
+;     b test
+;   start: body
+;     update
+;   test: cond branches to start
 (define-syntax-parser /for
   [(_ initializer:expr condition:expr update:expr body:expr)
    (let ([loop-start (gen-label "for-start")]
@@ -238,6 +294,12 @@
            (compile-condition condition start-target)
            }))])
 
+; (/whilenz reg body): repeats body while reg is non-zero. The test runs
+; first, so a zero reg on entry skips the body. Layout:
+;   start: cbz reg end
+;     body
+;     b start
+;   end:
 (define-syntax-parser /whilenz
   [(_ test-register:register body)
    (let ([loop-start (gen-label "whilenz-start")]
@@ -255,6 +317,11 @@
          end-label
            }))])
 
+; (/do-whilenz reg body): runs body, then repeats while reg is non-zero.
+; The body runs at least once. If the body counts reg down and reg starts
+; at 0, it wraps around and the loop runs for about 2^64 times. Layout:
+;   start: body
+;     cbnz reg start
 (define-syntax-parser /do-whilenz
   [(_ test-register:register body)
    (let ([loop-start (gen-label "whilenz-start")])
@@ -266,6 +333,12 @@
            cbnz test-register start-target
            }))])
 
+; (/whilez reg body): repeats body while reg is zero. The test runs first,
+; so a non-zero reg on entry skips the body. Layout:
+;   start: cbnz reg end
+;     body
+;     b start
+;   end:
 (define-syntax-parser /whilez
   [(_ test-register:register body)
    (let ([loop-start (gen-label "whilez-start")]
@@ -283,6 +356,10 @@
          end-label
            }))])
 
+; (/do-whilez reg body): runs body, then repeats while reg is zero. The body
+; runs at least once. Layout:
+;   start: body
+;     cbz reg start
 (define-syntax-parser /do-whilez
   [(_ test-register:register body)
    (let ([loop-start (gen-label "whilez-start")])
@@ -295,8 +372,11 @@
            cbz test-register start-target
            }))])
 
-; the test is at the top, so the body may run 0 times.
-; The first branch jumps to the test, which loops back while the condition holds.
+; (/while cond body): repeats body while cond holds. The test runs first, so
+; the body may run zero times. Layout:
+;     b test
+;   start: body
+;   test: cond branches to start
 (define-syntax-parser /while
   [(_ condition body)
    (let ([loop-start (gen-label "while-start")]
@@ -314,7 +394,10 @@
            (compile-condition condition start-target)
           }))])
 
-; the test is at the bottom, so the body always runs at least once
+; (/do-while cond body): runs body, then repeats while cond holds. The body
+; runs at least once. Layout:
+;   start: body
+;     cond branches to start
 (define-syntax-parser /do-while
   [(_ condition body)
    (let ([loop-start (gen-label "while-start")])
