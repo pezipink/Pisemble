@@ -61,11 +61,6 @@ into the source folder first:
 
 @commandline{racket my-program.rkt}
 
-An image (@filepath{.img}) is always rebuilt. An object (@filepath{.obj}) is skipped
-when it is up to date, meaning it is not older than the source module, the modules
-it requires, or the objects it links. A skipped object keeps its debug records in a
-@filepath{.obj.dbg} file written beside it.
-
 @section{Tests}
 
 @commandline{raco test test}

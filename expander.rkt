@@ -1468,52 +1468,10 @@
 (define (symbol-offsets obj)
   (for/list ([entry (obj-file-symbol-table obj)])
     (cons (hash-ref (obj-file-string-table obj) (car entry)) (cdr entry))))
-;; the debug records of an object are saved beside it, so an object that is skipped
-;; because it is up to date can still contribute them to the image that links it
-(define (debug-sidecar-name filename) (string-append filename ".dbg"))
 (define (store-obj-source! filename)
-  (define entry
-    (list (symbol-offsets current-obj) source-records func-records frame-records
-          scope-records))
-  (hash-set! obj-source-store filename entry)
-  (call-with-output-file (debug-sidecar-name filename) #:exists 'replace
-    (λ (out) (write entry out))))
-(define (load-obj-source! filename)
   (hash-set! obj-source-store filename
-             (call-with-input-file (debug-sidecar-name filename) read)))
-
-; the file of every module that the module named by name requires, at any phase.
-; Racket's own collections never change, so they are not walked.
-(define (module-dependency-paths name)
-  (define collects (path->string (simplify-path (find-system-path 'collects-dir))))
-  (define (project-file? path)
-    (and (path? path)
-         (file-exists? path)
-         (not (string-prefix? (path->string (simplify-path path)) collects))))
-  (define seen (make-hash))
-  (let walk ([name name])
-    (when (and (project-file? (resolved-module-path-name name)) (not (hash-ref seen name #f)))
-      (hash-set! seen name #t)
-      ; a module loaded from its .zo may not be declared yet, so load its declaration
-      (module-declared? name #t)
-      (for* ([phase+mpis (module->imports name)]
-             [mpi (cdr phase+mpis)])
-        (walk (module-path-index-resolve mpi)))))
-  (remove-duplicates
-   (for/list ([name (hash-keys seen)]) (resolved-module-path-name name))))
-(define (module-timestamp path)
-  (define stat (file-or-directory-stat path))
-  (+ (* 1000000000 (hash-ref stat 'modify-time-seconds)) (hash-ref stat 'modify-time-nanoseconds)))
-
-; an object is up to date when its .obj and debug sidecar exist and are not older than
-; the module that builds it, the modules it requires, or the objects it links
-(define (object-up-to-date? filename module-name link-files)
-  (and (file-exists? filename)
-       (file-exists? (debug-sidecar-name filename))
-       (let ([obj-time (module-timestamp filename)])
-         (for/and ([input (append (module-dependency-paths module-name) link-files)])
-           (and (file-exists? input)
-                (>= obj-time (module-timestamp input)))))))
+             (list (symbol-offsets current-obj) source-records func-records frame-records
+                   scope-records)))
 (define (relocate-linked-source! link-names)
   (define merged (symbol-offsets current-obj))
   (for ([fn link-names])
@@ -2192,17 +2150,7 @@
      #'(begin
          (reset-prog)
          (define is-image? (string-suffix? filename ".img"))
-         ; an object that is up to date is not rebuilt; its saved debug records are reloaded instead
-         (define up-to-date?
-           (and (not is-image?)
-                (object-up-to-date? filename
-                                    (variable-reference->resolved-module-path (#%variable-reference))
-                                    link-list)))
-         (if up-to-date?
-             (begin
-               (load-obj-source! filename)
-               (displayln (format "skipping ~a - already up to date" filename)))
-             (begin
+         
          (set-current-obj
           ; add the current file name as an object
           (match-let*
@@ -2215,7 +2163,8 @@
               obj)))
 
          (displayln "begin")
-
+         ; if this is an object file, only build if the source file is newer than the output file
+         
          a ... 
          (displayln "DONE")
          (hash-for-each
@@ -2473,7 +2422,16 @@
                
                )
              )
-             ))
+           
+         
+         ;; (if (or (not (file-exists? 'filename))
+         ;;           (> 
+         ;;            (file-or-directory-modify-seconds  (resolved-module-path-name (module-path-index-resolve (syntax-source-module #'filename))))
+         ;;            (file-or-directory-modify-seconds 'filename)))
+         ;;     (assemble)
+
+         ;; (displayln (format "skipping ~a - already up to date" filename))
+         ;; )
      )]))
   
 (provide (all-defined-out))
