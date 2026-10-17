@@ -1,6 +1,6 @@
 #lang pisemble
-;; A simple 3D starfield built on platform.rkt.
-(require "../lib/platform.rkt")
+;; A simple 3D starfield built on pi2d.rkt.
+(require "../lib/pi2d.rkt")
 
 (define star-count 80)
 (define star-data
@@ -12,13 +12,13 @@
            (modulo i 2)
            (modulo (quotient i 2) 2)))))
 
-(demo {
+(pi2d
 
-(subr Demo-init () [] {
+#:init () [] {
   (debug-str "starfield" #t)
-})
+}
 
-(subr Draw-frame
+#:render
       ([page x0] [input-frame x1] [frame x19] [stars x20] [remaining x15]
        [x-offset x4] [y-offset x5] [depth x6] [x-sign x7] [y-sign x8]
        [z x9] [projected-x x10] [projected-y x11] [coordinate x12]
@@ -90,8 +90,9 @@
 :advance-star
   sub remaining remaining @1
   cbnz remaining next-star-
-})
+}
 
+{
 :star-data
 (write-values star-data)
 })

@@ -1,17 +1,17 @@
 #lang pisemble
 ;; =====================================================================
-;; PLASMA - a demo built on platform.rkt
+;; PLASMA - a 2D program built on pi2d.rkt
 ;; =====================================================================
-;; Copy this file to start a new effect. You write two routines:
-;;   Demo-init    called once, after the framebuffer and MMU are up
-;;   Draw-frame   x0 = back buffer (width x height, 32 bit pixels made with rgb)
-;;                x1 = frame number
+;; Copy this file to start a new program. You write hooks with pi2d:
+;;   #:init     called once, after the framebuffer and MMU are up
+;;   #:render   x0 = back buffer (width x height, 32 bit pixels made with rgb)
+;;              x1 = frame number
 ;; The platform flips the page and waits for the next 1/60s tick after
-;; each Draw-frame. Tables can be computed in Racket at assembly time.
+;; each render. Tables can be computed in Racket at assembly time.
 ;;
 ;; Build:  racket plasma.rkt            -> plasma.obj + plasma.img (beside this file)
 ;; Run:    qemu-system-aarch64 -M raspi3b -kernel plasma.img -serial null -serial stdio
-(require "../lib/platform.rkt")
+(require "../lib/pi2d.rkt")
 
 ;; 256 entry sine, values 0..63
 (define sine-bytes
@@ -25,14 +25,14 @@
       (exact-round (* 127.5 (+ 1 (sin (+ phase (/ (* 2 pi i) 256)))))))
     (rgb (channel 0) (channel 2.094) (channel 4.189))))
 
-(demo {
+(pi2d
 
-(subr Demo-init () [] {
+#:init () [] {
   (debug-str "plasma" #t)
-})
+}
 
 ; colour(x, y) = palette[ sin(ya) + sin(yb) + t + sin(xa) + sin(xd) ]
-(subr Draw-frame
+#:render
       ([vptr x0] [t x1] [sines x2] [colours x3] [mask x4] [ny x5] [nx x6]
        [ya x7] [yb x8] [xa x9] [xd x10] [xd-row x11] [row-sum x12]
        [tmp x13] [v x14]) [] {
@@ -81,12 +81,14 @@
   add xd-row xd-row @2
   sub ny ny @1
   cbnz ny next-row-
-})
+}
 
+{
 :sine-table
 (write-values sine-bytes)
 /= 4
 :palette
 (for ([c palette-colours])
   (write-value-32 c))
-})
+}
+)

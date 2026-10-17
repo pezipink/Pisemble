@@ -1,6 +1,6 @@
 #lang pisemble
 ;; =====================================================================
-;; TEXTURED CUBE OVER A FLOOR CASTER - a demo built on platform.rkt
+;; TEXTURED CUBE OVER A FLOOR CASTER - an example built on pi2d.rkt
 ;; =====================================================================
 ;; The background is a Wolfenstein style floor caster. Each row below the
 ;; horizon is a ground distance, and each pixel samples a stone texture at
@@ -12,7 +12,7 @@
 ;; The AArch64 side only has mul, asr and udiv here, so fixed point is used
 ;; throughout: sines are scaled by 256 and 1/z is stored as 2^24 / z.
 ;; Build from this folder with: racket textured-cube.rkt
-(require "../lib/platform.rkt")
+(require "../lib/pi2d.rkt")
 
 (define horizon 88)                  ; last sky row; the floor starts below it
 (define cam-height 48)               ; camera height above the floor, in texels
@@ -112,12 +112,28 @@
   (for/list ([s sky-rgb] [f floor-average])
     (+ s (quotient (* (- f s) (+ i 1)) fog-rows))))
 
-(demo {
+(pi2d
 
-(subr Demo-init () [] {
+#:init () [] {
   (debug-str "textured cube" #t)
-})
+}
 
+; x0 = page, x1 = frame
+#:render ([vptr x0] [frame x1] [tri x25] [tcount x26]) [] {
+  bl draw-floor:
+  bl project-cube:
+  adr tri tri-table:
+  mov tcount @12
+:tri-loop
+  mov x21 vptr
+  mov x19 tri
+  bl draw-triangle:
+  add tri tri @9
+  sub tcount tcount @1
+  cbnz tcount tri-loop-
+}
+
+{
 ; x0 = page, x1 = frame. Paints the sky, then casts the floor.
 (subr draw-floor ([vptr x0] [frame x1] [sines x2] [m255 x3] [m63 x4] [pz x5] [pxf x6]
                   [row x7] [dist x8] [dr x9] [rowoff x10] [ptr x11] [col x12] [lat x13]
@@ -432,21 +448,6 @@
   cmp py s1
   b.le tri-row-
 :tri-skip
-})
-
-; x0 = page, x1 = frame
-(subr Draw-frame ([vptr x0] [frame x1] [tri x25] [tcount x26]) [] {
-  bl draw-floor:
-  bl project-cube:
-  adr tri tri-table:
-  mov tcount @12
-:tri-loop
-  mov x21 vptr
-  mov x19 tri
-  bl draw-triangle:
-  add tri tri @9
-  sub tcount tcount @1
-  cbnz tcount tri-loop-
 })
 
 /= 8

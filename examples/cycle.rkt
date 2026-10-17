@@ -1,6 +1,6 @@
 #lang pisemble
 ;; =====================================================================
-;; PALETTE CYCLE - 8 bit palette mode on platform.rkt
+;; PALETTE CYCLE - 8 bit palette mode on pi2d.rkt
 ;; =====================================================================
 ;; Each pixel is one byte: an index into a 256 colour palette.
 ;; The picture is drawn into both pages once (frames 0 and 1). After that
@@ -9,7 +9,7 @@
 ;;
 ;; Build:  racket cycle.rkt             -> cycle.obj + cycle.img (beside this file)
 ;; Run:    qemu-system-aarch64 -M raspi3b -kernel cycle.img -serial null -serial stdio
-(require "../lib/platform.rkt")
+(require "../lib/pi2d.rkt")
 
 ;; 256 entry sine, values 0..63, so four of them add up to 0..252
 (define sine-bytes
@@ -23,13 +23,13 @@
       (exact-round (* 127.5 (+ 1 (sin (+ phase (/ (* 2 pi i) 256)))))))
     (rgb (channel 0) (channel 2.094) (channel 4.189))))
 
-(demo #:bpp 8 {
+(pi2d #:bpp 8
 
-(subr Demo-init () [] {
+#:init () [] {
   (debug-str "palette cycle" #t)
-})
+}
 
-(subr Draw-frame ([vptr x0] [t x1]) [] {
+#:render ([vptr x0] [t x1]) [] {
   cmp t @2
   b.cs cycle+
   bl draw-picture:
@@ -43,8 +43,9 @@
   mov x0 @0
   mov x1 @256
   bl set-palette:
-})
+}
 
+{
 ; x0 = page.  index(x, y) = sin(3x) + sin(x + y) + sin(2y) + sin(y)
 (subr draw-picture
       ([vptr x0] [sines x2] [mask x4] [ny x5] [nx x6] [ya x7] [yb x8]

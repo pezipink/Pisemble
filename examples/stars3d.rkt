@@ -1,8 +1,8 @@
 #lang pisemble
-;; A minimal 3D starfield built on platform.rkt. Stars fly towards the viewer:
+;; A minimal 3D starfield built on pi2d.rkt. Stars fly towards the viewer:
 ;; each frame a star's depth shrinks and its screen position is offset / depth.
 ;; Build from this folder with: racket stars3d.rkt
-(require "../lib/platform.rkt")
+(require "../lib/pi2d.rkt")
 
 (define star-count 200)
 (define max-x-offset (- (quotient width 2) 3))   ; keeps a 2x2 star on screen
@@ -16,13 +16,13 @@
      (list (add1 (random 250)) (add1 (random 250)) (random 256)
            (random 2) (random 2)))))
 
-(demo {
+(pi2d
 
-(subr Demo-init () [] {
+#:init () [] {
   (debug-str "3d starfield" #t)
-})
+}
 
-(subr Draw-frame
+#:render
       ([page x0] [frame x1] [saved-page x9] [travel x10] [stars x11]
        [remaining x12] [mask x13] [x-negative x14] [y-negative x15] [z x16]
        [offset-x x6] [offset-y x7] [plus x17] [minus x18])
@@ -86,8 +86,9 @@
 :skip-star
   sub remaining remaining @1
   cbnz remaining next-star-
-})
+}
 
+{
 :star-data
 (write-values star-data)
 /= 4

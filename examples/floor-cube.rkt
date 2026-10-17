@@ -8,9 +8,9 @@
 ;; two axes. Rows below the horizon are a floor caster (depth = 160/dy).
 ;; Single precision FPU maths, s0-s29 are used.
 ;;
-;; Build from a scratch directory, not from demo/:
+;; Build from a scratch directory, not from examples/:
 ;;   racket <abs path>\floor-cube.rkt   -> floor-cube.obj + floor-cube.img
-(require "../lib/platform.rkt")
+(require "../lib/pi2d.rkt")
 
 (define (f32 x)
   (integer-bytes->integer (real->floating-point-bytes x 4 #f) #f #f))
@@ -46,11 +46,11 @@
         (f32 256.0)
         (rgb 120 110 90) (rgb 50 45 40) (rgb 20 30 70)))
 
-(demo {
+(pi2d
 
-(subr Demo-init () [] {
+#:init () [] {
   (debug-str "floor cube" #t)
-})
+}
 
 ;; register map for the per pixel loop
 ;;   s8-s10  ray position in local space (cx cy cz)
@@ -60,7 +60,7 @@
 ;;   s26-s28 row start position
 ;;   s6, s7  floor u step and u
 ;;   s29     1.0
-(subr Draw-frame
+#:render
       ([vptr x0] [t x1] [tex x2] [xc x3] [yr x4] [tmp x5] [ui x6] [vi x7]
        [face x8] [addr x9] [col x10] [rows x11] [consts x12] [mask x13]
        [vz x14] [sines x15]) [] {
@@ -302,8 +302,9 @@
   add yr yr @1
   sub rows rows @1
   cbnz rows row-loop-
-})
+}
 
+{
 /= 4
 :consts
 (for ([w const-words]) (write-value-32 w))

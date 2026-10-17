@@ -1,7 +1,7 @@
 #lang pisemble
-;; A small three-ball animation built on platform.rkt.
+;; A small three-ball animation built on pi2d.rkt.
 ;; Build from this folder with: racket bouncing.rkt
-(require "../lib/platform.rkt")
+(require "../lib/pi2d.rkt")
 
 (define radius 9)
 (define diameter (add1 (* 2 radius)))
@@ -11,14 +11,14 @@
   (for/list ([dy (in-range (- radius) (add1 radius))])
     (inexact->exact (floor (sqrt (- (sqr radius) (sqr dy)))))))
 
-(demo {
+(pi2d
 
-(subr Demo-init () [] {
+#:init () [] {
   (breakpoint)
   (debug-str "bouncing circles" #t)
-})
+}
 
-(subr Draw-frame ([page x0] [frame x1]) [x14 x15] {
+#:render ([page x0] [frame x1]) [x14 x15] {
   mov x14 frame
   mov x15 page
   mov x0 page
@@ -57,8 +57,9 @@
   mov x7 @121
   (load-immediate w8 (rgb 255 220 72))
   bl draw-ball:
-})
+}
 
+{
 ; Return the bouncing coordinate in x0. The path has a linear motion and
 ; reflects at each end of the range.
 (subr bounce-axis

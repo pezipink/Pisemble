@@ -1,18 +1,18 @@
 #lang pisemble
 ;; =====================================================================
-;; ROTOZOOMER - a floating point rotozoomer built on platform.rkt
+;; ROTOZOOMER - a floating point rotozoomer built on pi2d.rkt
 ;; =====================================================================
 ;; A 64x64 image is tiled across the screen, rotated and zoomed over
 ;; time. The image is loaded at assembly time by texture.rkt, which
 ;; draws it into a texture with racket/draw and writes the texels into
 ;; the binary. See docs/tutorials/rotozoomer.md for the maths.
 ;;
-;; Draw-frame   x0 = back buffer (width x height, 32 bit pixels)
+;; #:render     x0 = back buffer (width x height, 32 bit pixels)
 ;;              x1 = frame number
 ;;
 ;; Build:  racket rotozoomer.rkt        -> rotozoomer.img, .gdb, .elf, .obj
 ;; Run:    qemu-system-aarch64 -M raspi3b -kernel rotozoomer.img -serial null -serial stdio
-(require "../lib/platform.rkt"
+(require "../lib/pi2d.rkt"
          "texture.rkt"
          racket/runtime-path)
 
@@ -34,13 +34,13 @@
   (list (f32 0.8) (f32 0.6) (f32 160.0) (f32 100.0) (f32 32.0) (f32 640.0)
         (f32 90.0) (f32 60.0)))
 
-(demo {
+(pi2d
 
-(subr Demo-init () [] {
+#:init () [] {
   (debug-str "rotozoomer" #t)
-})
+}
 
-(subr Draw-frame
+#:render
       ([vptr x0] [frame x1] [sines x2] [tex x3] [ang x4] [tmp x16]
        [tmp2 x17] [ny x19] [nx x20] [consts x21]) [] {
   adr sines sine-table:
@@ -128,8 +128,9 @@
   fadd s13 s13 s15
   sub ny ny @1
   cbnz ny next-row-
-})
+}
 
+{
 /= 4
 :consts
 (for ([c const-bits]) (write-value-32 c))

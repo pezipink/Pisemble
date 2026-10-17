@@ -6,25 +6,21 @@
 ;; 32 bit (or 8 bit palette) framebuffer, turns on the MMU and caches, then
 ;; runs the frame loop:
 ;;
-;;     Demo-init                       once
-;;     loop:  Draw-frame  x0 = back page, x1 = frame number
+;;     Pi2d-init                       once
+;;     loop:  Pi2d-update              once per frame, no arguments
+;;            Pi2d-render  x0 = back page, x1 = frame number
 ;;            flip to the page just drawn
 ;;            wait for the next 1/FPS tick (generic timer)
 ;;
-;; Usage, in your demo file:
-;;     (require pisemble/lib/platform)
-;;     (demo { ...code and data, defining Demo-init and Draw-frame... })
-;;     (demo #:bpp 8 { ... })    for 8 bit palette mode: 1 byte per pixel
-;; (demo ...) assembles your code into <name>.obj, then builds <name>.img from
-;; this platform code + <name>.obj. <name> is your demo file's name, and both
-;; files go in the same folder as the demo file. Running the demo from any
-;; directory gives the same output.
-;; ROW-BYTES and PAGE-BYTES follow the chosen depth.
+;; Programs are written with the pi2d macro in pi2d.rkt, which passes the
+;; hooks and your data to the platform. ROW-BYTES and PAGE-BYTES follow the
+;; chosen width, height and depth. set-size! and set-bpp! change them at
+;; expansion time, before the image is assembled.
 ;;
-;; Rules for demo code:
-;;  * Demo-init and Draw-frame may use x0-x28 freely.
+;; Rules for hook code:
+;;  * Hooks may use x0-x28 freely. Anything a hook needs to keep, it stores in memory.
 ;;  * Labels starting with a capital letter are global. Only use capitals for
-;;    Demo-init and Draw-frame, and don't call platform globals: the linker
+;;    the Pi2d-* hooks, and don't call platform globals: the linker
 ;;    refuses a <name>.obj that references a symbol defined in the platform.
 ;;  * <name>.obj is linked at a 4KB boundary, so /= up to $1000 works as expected.
 ;;
@@ -46,18 +42,28 @@
                        "struct.rkt" "expr.rkt"))
 
 ;; ---- screen ----
+;; width and height are the visible size. The framebuffer is double height.
+;; Set them with set-size! and set-bpp! before assembling, as pi2d does.
 (define width 320)
 (define height 200)
 (define FPS 60)
-;; bits per pixel: 32 (direct colour) or 8 (palette). Set with (demo #:bpp 8 ...).
+;; bits per pixel: 32 (direct colour) or 8 (palette). Set with (pi2d #:bpp 8 ...).
 (define BPP 32)
 (define ROW-BYTES (* width 4))
 (define PAGE-BYTES (* width height 4))
+(define (update-geometry!)
+  (set! ROW-BYTES (* width (quotient BPP 8)))
+  (set! PAGE-BYTES (* ROW-BYTES height)))
+(define (set-size! w h)
+  (unless (and (exact-positive-integer? w) (exact-positive-integer? h))
+    (error "width and height must be positive integers, got" w h))
+  (set! width w)
+  (set! height h)
+  (update-geometry!))
 (define (set-bpp! n)
   (unless (memv n '(8 32)) (error "bpp must be 8 or 32, got" n))
   (set! BPP n)
-  (set! ROW-BYTES (* width (quotient n 8)))
-  (set! PAGE-BYTES (* ROW-BYTES height)))
+  (update-geometry!))
 
 ;; 32 bit pixel, or a palette entry in 8 bit mode. RGB order, so red is the low byte.
 (define (rgb r g b)
@@ -264,25 +270,6 @@
   }])
 
 ;; =====================================================================
-;; the demo wrapper
-;; =====================================================================
-(define-syntax-parser demo
-  [(_ (~optional (~seq #:bpp bpp:expr) #:defaults ([bpp #'32])) body ...)
-   (define src (syntax-source this-syntax))
-   (define-values (dir base-name)
-     (if (path-string? src)
-         (let-values ([(dir name must-be-dir?) (split-path (path->complete-path src))])
-           (values dir (regexp-replace #rx"[.][^.]*$" (path->string name) "")))
-         (values (current-directory) "demo")))
-   (define obj-file (path->string (build-path dir (string-append base-name ".obj"))))
-   (define img-file (path->string (build-path dir (string-append base-name ".img"))))
-   (with-syntax ([obj obj-file] [img img-file])
-     #'(begin
-         (set-bpp! bpp)
-         (aarch64 obj [] body ... { (gfx-library) })
-         (platform-image img obj)))])
-
-;; =====================================================================
 ;; MMU: identity map, RAM write-back, GPU memory non-cacheable, peripherals device
 ;; =====================================================================
 ;; in: x0 = table pointer, x2 = descriptor, x5 = 2MB.  n must be > 0.
@@ -388,11 +375,12 @@
     (setup-mmu)
     (debug-str "platform up" #t)
 
-    bl Demo-init:
+    bl Pi2d-init:
 :frame-loop
+    bl Pi2d-update:
     bl back-buffer:
     ldr x1 frame-count:
-    bl Draw-frame:
+    bl Pi2d-render:
     bl flip:
     bl wait-frame:
     ldr x1 frame-count:
