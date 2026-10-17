@@ -9,7 +9,7 @@
 ;;
 ;; Build:  racket cycle.rkt             -> cycle.obj + cycle.img (beside this file)
 ;; Run:    qemu-system-aarch64 -M raspi3b -kernel cycle.img -serial null -serial stdio
-(require "platform.rkt")
+(require "../lib/platform.rkt")
 
 ;; 256 entry sine, values 0..63, so four of them add up to 0..252
 (define sine-bytes

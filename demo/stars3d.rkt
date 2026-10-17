@@ -2,7 +2,7 @@
 ;; A minimal 3D starfield built on platform.rkt. Stars fly towards the viewer:
 ;; each frame a star's depth shrinks and its screen position is offset / depth.
 ;; Build from this folder with: racket stars3d.rkt
-(require "platform.rkt")
+(require "../lib/platform.rkt")
 
 (define star-count 200)
 (define max-x-offset (- (quotient width 2) 3))   ; keeps a 2x2 star on screen

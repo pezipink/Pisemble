@@ -1,12 +1,12 @@
 ---
 title: Demo template in demo/
-description: How demo/platform.rkt boots QEMU, runs the frame loop and links a demo, the contract a demo must follow, and the helpers it gets for free
+description: How lib/platform.rkt boots QEMU, runs the frame loop and links a demo, the contract a demo must follow, and the helpers it gets for free
 ms.date: 2026-10-17
 ---
 
 ## Files
 
-* `demo/platform.rkt` holds everything except the effect: boot, UART, framebuffer, MMU, frame loop, fault handler and the shared graphics helpers.
+* `lib/platform.rkt` holds everything except the effect: boot, UART, framebuffer, MMU, frame loop, fault handler and the shared graphics helpers.
 * `demo/plasma.rkt` is a 32 bit example (per-pixel plasma).
 * `demo/cycle.rkt` is an 8 bit example. It draws a pattern once, then animates by rotating the palette every frame.
 * `demo/bouncing.rkt` is a 32 bit animation with three bouncing balls. Each ball is a filled circle drawn as horizontal spans, and its position is computed from the frame counter.
@@ -21,13 +21,13 @@ cd c:\repos\Pisemble\demo
 Then run `plasma.img` as described in [qemu-and-debugging.md](qemu-and-debugging.md). Expect `platform up` on the UART.
 
 > [!CAUTION]
-> The build writes `<name>.obj` and `<name>.img` beside the demo source, where `<name>` is the source file's name. Running Racket from another folder gives the same output. Two demos with different names do not overwrite each other. To preserve existing artifacts, rename the demo or copy it to a scratch folder before building it. The `require "platform.rkt"` path resolves relative to the source file.
+> The build writes `<name>.obj` and `<name>.img` beside the demo source, where `<name>` is the source file's name. Running Racket from another folder gives the same output. Two demos with different names do not overwrite each other. To preserve existing artifacts, rename the demo or copy it to a scratch folder before building it. The `require "../lib/platform.rkt"` path resolves relative to the source file.
 
 ## Writing a new demo
 
 ```racket
 #lang pisemble
-(require "platform.rkt")
+(require "../lib/platform.rkt")
 
 (demo {
   :Demo-init

@@ -146,7 +146,7 @@ Note: on QEMU raspi3b the platform runs at EL2, and the FP arithmetic, `fmov` im
 | `mrs x0, far_el1`    | `$d5386000` |
 | `tlbi vmalle1`       | `$d508871f` |
 
-QEMU starts the kernel at EL2. The EL2 version of an EL1 register differs only in the op1 field, so `demo/platform.rkt` and `emu_clean.rkt` (pisemble-wolf3d repo) define `(el-op base)`, which adds `4 << 16`. For example, `(write-value-32 (el-op $d518c000))` is `msr vbar_el2, x0`, and `(el-op $d508871f)` is `tlbi alle2`.
+QEMU starts the kernel at EL2. The EL2 version of an EL1 register differs only in the op1 field, so `lib/platform.rkt` and `emu_clean.rkt` (pisemble-wolf3d repo) define `(el-op base)`, which adds `4 << 16`. For example, `(write-value-32 (el-op $d518c000))` is `msr vbar_el2, x0`, and `(el-op $d508871f)` is `tlbi alle2`.
 
 ## Register renaming
 
@@ -190,7 +190,7 @@ The macros generate labels like `:then-start_0` and branch to them with `+` and 
 * `(init-uart)` sets up the mini UART. It needs `periph-addresses` in the same image.
 * `(create-send-char)` defines `send-char` (byte in `w0`). It loads `AUXB:` so it also needs `periph-addresses`.
 * `(debug-str "text" newline?)` sends a string using the UART protocol in [qemu-and-debugging.md](qemu-and-debugging.md). It needs a `send-char` routine in the same program.
-* `debug-reg` (send a register as a number) and `debug-str-reg` (a string followed by a register) are not in `periph.rkt`. Copies live in `demo/platform.rkt` and in `emu_clean.rkt` in the pisemble-wolf3d repo.
+* `debug-reg` (send a register as a number) and `debug-str-reg` (a string followed by a register) are not in `periph.rkt`. Copies live in `lib/platform.rkt` and in `emu_clean.rkt` in the pisemble-wolf3d repo.
 
 ## Writing macros that emit assembly
 

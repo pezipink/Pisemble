@@ -36,7 +36,7 @@ the ones you need explicitly:
 | `pisemble/lib/struct`    | `load-immediate`, `/struct`                                    |
 | `pisemble/lib/expr`      | Structured control flow: `/if`, `/when`, `/cond`, `/while` ... |
 | `pisemble/lib/periph`    | Peripheral addresses, `init-uart`, `debug-str`                 |
-| `pisemble/demo/platform` | Boot, framebuffer, MMU and frame loop for the demos            |
+| `pisemble/lib/platform` | Boot, framebuffer, MMU and frame loop for the demos            |
 
 ## A first program
 
@@ -78,8 +78,8 @@ Programs then start with `#lang mylang`. Because `pisemble/base` is
 
 ## Demos and tests
 
-* [demo/](demo/) contains the demoscene template (`platform.rkt`) and demos built
-  on it. Run one with `racket demo/plasma.rkt`, then open the image in QEMU.
+* [demo/](demo/) contains demos built on the demoscene platform in
+  [lib/platform.rkt](lib/platform.rkt). Run one with `racket demo/plasma.rkt`, then open the image in QEMU.
 * [test/](test/) contains the rackunit suite. `raco test test` runs it.
 
 ## Documentation

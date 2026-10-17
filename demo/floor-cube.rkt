@@ -10,7 +10,7 @@
 ;;
 ;; Build from a scratch directory, not from demo/:
 ;;   racket <abs path>\floor-cube.rkt   -> floor-cube.obj + floor-cube.img
-(require "platform.rkt")
+(require "../lib/platform.rkt")
 
 (define (f32 x)
   (integer-bytes->integer (real->floating-point-bytes x 4 #f) #f #f))

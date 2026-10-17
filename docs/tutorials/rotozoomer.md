@@ -23,7 +23,7 @@ Read these project notes first:
 * [language.md](../../agent-context/language.md) for the Pisemble syntax used in the snippets.
 * [demo-template.md](../../agent-context/demo-template.md) for the demo contract, the `Draw-frame` subroutine, and the constants in `platform.rkt`.
 * [qemu-and-debugging.md](../../agent-context/qemu-and-debugging.md) for how the project builds and runs under QEMU.
-* [platform.rkt](../../demo/platform.rkt) for `width`, `height`, and `rgb`.
+* [platform.rkt](../../lib/platform.rkt) for `width`, `height`, and `rgb`.
 * [floor-cube.rkt](../../demo/floor-cube.rkt) for an example of single precision floating point code.
 
 The examples target the 320 by 200 screen in 32 bit colour mode, as set up by `platform.rkt`. Each pixel is one 32 bit word. The screen row length is `ROW-BYTES`, which is 1280 bytes.
@@ -519,7 +519,7 @@ The Pisemble file requires the helper and points at the image with `define-runti
 
 ```racket
 #lang pisemble
-(require (file "C:/path/to/Pisemble/demo/platform.rkt")
+(require (file "C:/path/to/Pisemble/lib/platform.rkt")
          "texture.rkt"
          racket/runtime-path)
 

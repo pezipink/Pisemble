@@ -1,7 +1,7 @@
 #lang pisemble
 ;; A small three-ball animation built on platform.rkt.
 ;; Build from this folder with: racket bouncing.rkt
-(require "platform.rkt")
+(require "../lib/platform.rkt")
 
 (define radius 9)
 (define diameter (add1 (* 2 radius)))

@@ -15,7 +15,7 @@ Everything is assembled by the `aarch64` macro in `expander.rkt`:
 
 * The output file name decides the kind: names ending in `.img` produce a raw binary image, anything else a Pisemble object file.
 * The link list works for both kinds. An object can be built from other objects.
-* Each form starts with a fresh assembler state. Several forms can run in one source file, in order. `demo/platform.rkt` uses this: `(demo ...)` builds `<name>.obj`, then builds `<name>.img` from it, both beside the demo source.
+* Each form starts with a fresh assembler state. Several forms can run in one source file, in order. `lib/platform.rkt` uses this: `(demo ...)` builds `<name>.obj`, then builds `<name>.img` from it, both beside the demo source.
 * Files are written to the current directory, and there is no up-to-date check. Every run reassembles and relinks.
 * Object files are read at link time from the current directory, so build the objects first (or in the same file, earlier).
 
@@ -38,7 +38,7 @@ A label is global when the first character after the colon is upper case (`:Draw
 * Defining a global whose name already appears in a linked object's string table errors with "could not create the global label X since it already exists in a linked object".
 
 > [!IMPORTANT]
-> An image cannot link an object that refers to a global the image itself defines. The check in the `aarch64` macro compares the image's globals with every name in the merged objects' string table, and that table also contains names the objects only reference. Linking fails with "could not link as the global symbol X already exists". In practice, an object can define globals that the image calls, but cannot call back into globals defined by the image. `demo/platform.rkt` works around this by assembling its own copies of helpers such as `send-char` into the demo's `.obj` under lower-case names. A fix would compare against the merged symbol table instead; that is a core change, so ask the owner first.
+> An image cannot link an object that refers to a global the image itself defines. The check in the `aarch64` macro compares the image's globals with every name in the merged objects' string table, and that table also contains names the objects only reference. Linking fails with "could not link as the global symbol X already exists". In practice, an object can define globals that the image calls, but cannot call back into globals defined by the image. `lib/platform.rkt` works around this by assembling its own copies of helpers such as `send-char` into the demo's `.obj` under lower-case names. A fix would compare against the merged symbol table instead; that is a core change, so ask the owner first.
 
 When two objects in the link list define the same global, `merge-objs` in `objfile.rkt` stops with "could not link as the global symbol X is defined in more than one object".
 

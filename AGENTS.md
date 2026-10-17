@@ -37,7 +37,7 @@ The assembler is a work in progress. It supports a subset of AArch64, and instru
 | `lib/struct.rkt`           | `load-immediate`, `/struct`                                                |
 | `lib/expr.rkt`             | Structured control flow: `/if`, `/when`, `/cond`, `/whilenz`, `/while` ... |
 | `base/main.rkt`            | `pisemble/base` language: `racket/base` plus the assembler, for building other `#lang`s |
-| `demo/platform.rkt`        | Demoscene template platform (boot, framebuffer, MMU, frame loop)           |
+| `lib/platform.rkt`         | Demoscene platform (boot, framebuffer, MMU, frame loop)                    |
 | `demo/plasma.rkt`          | 32 bit plasma demo built on the template                                   |
 | `demo/cycle.rkt`           | 8 bit palette-cycling demo built on the template                           |
 | `demo/stars3d.rkt`         | Minimal 3D starfield demo built on the template                            |

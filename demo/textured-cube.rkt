@@ -12,7 +12,7 @@
 ;; The AArch64 side only has mul, asr and udiv here, so fixed point is used
 ;; throughout: sines are scaled by 256 and 1/z is stored as 2^24 / z.
 ;; Build from this folder with: racket textured-cube.rkt
-(require "platform.rkt")
+(require "../lib/platform.rkt")
 
 (define horizon 88)                  ; last sky row; the floor starts below it
 (define cam-height 48)               ; camera height above the floor, in texels

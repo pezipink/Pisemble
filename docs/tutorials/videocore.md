@@ -24,7 +24,7 @@ Read these project notes first:
 * [qemu-and-debugging.md](../../agent-context/qemu-and-debugging.md) for how the project runs under QEMU and how to read the UART output.
 * [dma.md](./dma.md) for the DMA tutorial, which also uses the mailbox to find free channels.
 
-The snippets use `send-vcore-msg` and `debug-str-reg` from [platform.rkt](../../demo/platform.rkt), so a demo that follows them starts with `(require "platform.rkt")`, as the other demos do.
+The snippets use `send-vcore-msg` and `debug-str-reg` from [platform.rkt](../../lib/platform.rkt), so a demo that follows them starts with `(require "../lib/platform.rkt")`, as the other demos do.
 
 > [!NOTE]
 > The clock, board, and DMA results in this tutorial come from a QEMU run of the fragments below. Real hardware, and other firmware versions, may report different values.
@@ -167,7 +167,7 @@ In the QEMU run the mask was `$3C`, which sets bits 2 to 5. Use it with the advi
 
 ## Example: set up a frame buffer
 
-The frame buffer needs several tags, and they all go in one message. The `mbox-msg` in [platform.rkt](../../demo/platform.rkt) is the complete version. It asks for these tags in order:
+The frame buffer needs several tags, and they all go in one message. The `mbox-msg` in [platform.rkt](../../lib/platform.rkt) is the complete version. It asks for these tags in order:
 
 1. Set the physical size (`$48003`) to the screen width and height.
 2. Set the virtual size (`$48004`) to the width and twice the height, which gives two pages.

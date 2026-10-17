@@ -141,7 +141,7 @@ Add new record types to both the sending code and the `match` in `comms.fsx`. `g
 
 ## Real hardware differences to keep in mind
 
-* `emu_clean.rkt` (pisemble-wolf3d repo) has two build settings at the top. Under QEMU use `EL 2` and `SOFT-FLIP 1`: the flip happens straight after drawing and no vsync interrupt is enabled. On the old hardware code use `EL 3` and `SOFT-FLIP 0`, which enables the SMI vsync interrupt. The `CurrentEL` check at boot stops the program if the EL is wrong. `demo/platform.rkt` hard-codes EL2 and has no switch.
+* `emu_clean.rkt` (pisemble-wolf3d repo) has two build settings at the top. Under QEMU use `EL 2` and `SOFT-FLIP 1`: the flip happens straight after drawing and no vsync interrupt is enabled. On the old hardware code use `EL 3` and `SOFT-FLIP 0`, which enables the SMI vsync interrupt. The `CurrentEL` check at boot stops the program if the EL is wrong. `lib/platform.rkt` hard-codes EL2 and has no switch.
 * Caches matter. Anything the GPU reads (mailbox messages, the framebuffer if mapped cacheable) must be cleaned with `dc civac` or mapped non-cacheable. The platform code already does this, but QEMU will not catch mistakes.
 * `config-pi3` has `kernel_old=1` and `arm_64bit=1`, so firmware loads the image at address 0, not `$80000`. Code that depends on absolute addresses behaves differently.
 * Timing, DMA speed and vsync behaviour will differ.

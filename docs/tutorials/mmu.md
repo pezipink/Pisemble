@@ -22,7 +22,7 @@ Read these project notes first:
 
 * [language.md](../../agent-context/language.md) for the Pisemble syntax used in the snippets, including the raw opcode rules.
 * [qemu-and-debugging.md](../../agent-context/qemu-and-debugging.md) for how the project runs under QEMU and which monitor commands are available.
-* [platform.rkt](../../demo/platform.rkt) for the reference `setup-mmu` macro and the memory map constants. The snippets below follow this file.
+* [platform.rkt](../../lib/platform.rkt) for the reference `setup-mmu` macro and the memory map constants. The snippets below follow this file.
 * [dma.md](dma.md) if you have not read the DMA tutorial. It covers the cache rules that also apply here.
 
 The project boots under QEMU with `-M raspi3b` and `-kernel`, which enters the image at EL2. The code here runs at EL2 and configures the EL2 translation regime. If your code runs at EL1, use the EL1 registers (`tcr_el1`, `mair_el1`, `ttbr0_el1`, `sctlr_el1`) instead, and the field layouts change.

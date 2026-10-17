@@ -24,7 +24,7 @@ Read these project notes first:
 * [qemu-and-debugging.md](../../agent-context/qemu-and-debugging.md) for how QEMU starts the image, and the note that all four cores begin at `$80000`.
 * [linker.md](../../agent-context/linker.md) for alignment and global labels.
 
-The core park code in `emu_clean.rkt` (pisemble-wolf3d repo, around lines 238 to 256) and [platform.rkt](../../demo/platform.rkt) (around lines 323 to 329) is a working reference. Read it after you have worked through this tutorial, and compare your version with it.
+The core park code in `emu_clean.rkt` (pisemble-wolf3d repo, around lines 238 to 256) and [platform.rkt](../../lib/platform.rkt) (around lines 323 to 329) is a working reference. Read it after you have worked through this tutorial, and compare your version with it.
 
 ## The cores
 

@@ -11,7 +11,7 @@
 ;;
 ;; Build:  racket plasma.rkt            -> plasma.obj + plasma.img (beside this file)
 ;; Run:    qemu-system-aarch64 -M raspi3b -kernel plasma.img -serial null -serial stdio
-(require "platform.rkt")
+(require "../lib/platform.rkt")
 
 ;; 256 entry sine, values 0..63
 (define sine-bytes

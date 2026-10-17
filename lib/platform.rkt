@@ -12,7 +12,7 @@
 ;;            wait for the next 1/FPS tick (generic timer)
 ;;
 ;; Usage, in your demo file:
-;;     (require "platform.rkt")
+;;     (require pisemble/lib/platform)
 ;;     (demo { ...code and data, defining Demo-init and Draw-frame... })
 ;;     (demo #:bpp 8 { ... })    for 8 bit palette mode: 1 byte per pixel
 ;; (demo ...) assembles your code into <name>.obj, then builds <name>.img from
@@ -40,10 +40,10 @@
 (require (for-syntax syntax/parse racket/stxparam racket/syntax))
 (require syntax/parse/define)
 (require racket/stxparam)
-(require "../lib/periph.rkt" "../lib/stack.rkt" "../lib/struct.rkt" "../lib/expr.rkt")
+(require "periph.rkt" "stack.rkt" "struct.rkt" "expr.rkt")
 (provide (all-defined-out)
-         (all-from-out "../lib/periph.rkt" "../lib/stack.rkt"
-                       "../lib/struct.rkt" "../lib/expr.rkt"))
+         (all-from-out "periph.rkt" "stack.rkt"
+                       "struct.rkt" "expr.rkt"))
 
 ;; ---- screen ----
 (define width 320)

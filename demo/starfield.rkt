@@ -1,6 +1,6 @@
 #lang pisemble
 ;; A simple 3D starfield built on platform.rkt.
-(require "platform.rkt")
+(require "../lib/platform.rkt")
 
 (define star-count 80)
 (define star-data

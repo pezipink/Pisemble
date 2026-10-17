@@ -61,7 +61,7 @@ Put `(breakpoint)` in a body where a body form is allowed. The sample program us
 })
 ```
 
-The macro is defined in [platform.rkt](../../demo/platform.rkt). You get it when your program requires the platform.
+The macro is defined in [platform.rkt](../../lib/platform.rkt). You get it when your program requires the platform.
 
 A few rules apply to breakpoints:
 

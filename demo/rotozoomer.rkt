@@ -12,7 +12,7 @@
 ;;
 ;; Build:  racket rotozoomer.rkt        -> rotozoomer.img, .gdb, .elf, .obj
 ;; Run:    qemu-system-aarch64 -M raspi3b -kernel rotozoomer.img -serial null -serial stdio
-(require "platform.rkt"
+(require "../lib/platform.rkt"
          "texture.rkt"
          racket/runtime-path)
 
